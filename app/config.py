@@ -15,4 +15,9 @@ BACKFILL_DAYS = int(os.getenv("BACKFILL_DAYS", "730"))
 # Minimum bars a strategy needs before emitting signals
 MIN_BARS = int(os.getenv("MIN_BARS", "120"))
 
+# Emit signals for position flips on any bar within this many days of the
+# latest bar. Wider than one day so a missed/failed nightly run is caught up
+# on the next run instead of silently dropping the intervening transitions.
+SIGNAL_LOOKBACK_DAYS = int(os.getenv("SIGNAL_LOOKBACK_DAYS", "7"))
+
 TZ = os.getenv("TZ", "Asia/Kolkata")

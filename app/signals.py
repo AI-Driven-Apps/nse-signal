@@ -1,15 +1,20 @@
 """Live signal engine. Runs after ingest: recompute positions per symbol
-with the active strategy, and where the last bar flipped 0→1 (BUY) or
-1→0 (SELL), record a Signal and push it to Discord.
+with the active strategy, and for every bar within SIGNAL_LOOKBACK_DAYS that
+flipped 0→1 (BUY) or 1→0 (SELL), record a Signal and push it to Discord.
+
+Scanning a window (not just the last bar) means a missed or failed nightly run
+is caught up on the next run instead of dropping the intervening transitions.
 
 Deduplicated: a (stock, date, action, strategy) signal is only ever sent once,
 so re-running the job is safe."""
 import logging
+from datetime import timedelta
 
+import pandas as pd
 from sqlalchemy import select
 
 from .backtest import load_prices
-from .config import MIN_BARS
+from .config import MIN_BARS, SIGNAL_LOOKBACK_DAYS
 from .db import session_scope, get_setting
 from .models import Signal, Stock
 from .notify import send_signal
@@ -38,25 +43,32 @@ def _scan_symbol(symbol: str, strat, strategy_name: str) -> None:
         if len(df) < MIN_BARS:
             return
         pos = strat.positions(df)
-        prev, curr = float(pos.iloc[-2]), float(pos.iloc[-1])
-        if prev == curr:
-            return
-        action = "BUY" if curr > prev else "SELL"
-        bar_date = df.index[-1]
-        price = float(df["close"].iloc[-1])
+        flips = pos.diff()  # +1 = BUY (0→1), -1 = SELL (1→0), 0 = no change
+        cutoff = df.index[-1] - timedelta(days=SIGNAL_LOOKBACK_DAYS)
 
         stock = s.execute(select(Stock).where(Stock.symbol == symbol)).scalar_one()
-        dup = s.execute(
-            select(Signal).where(
-                Signal.stock_id == stock.id, Signal.date == bar_date,
-                Signal.action == action, Signal.strategy == strategy_name,
-            )
-        ).scalar_one_or_none()
-        if dup:
-            return
+        for i in range(1, len(df)):
+            delta = flips.iloc[i]
+            if pd.isna(delta) or delta == 0:
+                continue
+            bar_date = df.index[i]
+            if bar_date < cutoff:
+                continue
+            action = "BUY" if delta > 0 else "SELL"
+            price = float(df["close"].iloc[i])
 
-        sig = Signal(stock_id=stock.id, date=bar_date, action=action,
-                     price=price, strategy=strategy_name)
-        sig.sent_to_discord = send_signal(symbol, action, price, strategy_name, bar_date)
-        s.add(sig)
-        log.info("%s %s @ %.2f (discord=%s)", action, symbol, price, sig.sent_to_discord)
+            dup = s.execute(
+                select(Signal).where(
+                    Signal.stock_id == stock.id, Signal.date == bar_date,
+                    Signal.action == action, Signal.strategy == strategy_name,
+                )
+            ).scalar_one_or_none()
+            if dup:
+                continue
+
+            sig = Signal(stock_id=stock.id, date=bar_date, action=action,
+                         price=price, strategy=strategy_name)
+            sig.sent_to_discord = send_signal(symbol, action, price, strategy_name, bar_date)
+            s.add(sig)
+            log.info("%s %s @ %.2f on %s (discord=%s)",
+                     action, symbol, price, bar_date, sig.sent_to_discord)

@@ -1,9 +1,17 @@
-"""Incremental EOD ingestion: fetch only bars newer than what's in the DB."""
+"""EOD ingestion.
+
+Re-fetches the full BACKFILL_DAYS window each run and upserts, rather than
+appending only new bars. yfinance's auto_adjust rebases the *entire* history
+after every split/dividend, so appending new adjusted bars onto older ones
+fetched under a different baseline silently mixes price scales and corrupts
+every indicator computed across the join. A full re-fetch keeps one consistent
+baseline; upsert makes it idempotent and cheap on unchanged bars."""
 import logging
 import time
 from datetime import date, timedelta
 
-from sqlalchemy import func, select
+import pandas as pd
+from sqlalchemy import select
 
 from .config import BACKFILL_DAYS
 from .data_provider import get_provider
@@ -27,36 +35,33 @@ def _get_or_create_stock(session, symbol: str) -> Stock:
 
 def ingest_symbol(session, provider, symbol: str) -> int:
     stock = _get_or_create_stock(session, symbol)
-    last: date | None = session.execute(
-        select(func.max(PriceBar.date)).where(PriceBar.stock_id == stock.id)
-    ).scalar()
-    start = (last + timedelta(days=1)) if last else date.today() - timedelta(days=BACKFILL_DAYS)
-    if start > date.today():
-        return 0
+    start = date.today() - timedelta(days=BACKFILL_DAYS)
 
     df = provider.fetch(symbol, start=start)
     if df.empty:
         return 0
 
     existing = {
-        d for (d,) in session.execute(
-            select(PriceBar.date).where(
-                PriceBar.stock_id == stock.id, PriceBar.date >= start
-            )
-        )
+        bar.date: bar
+        for bar in session.execute(
+            select(PriceBar).where(PriceBar.stock_id == stock.id)
+        ).scalars()
     }
-    n = 0
+    changed = 0
     for d, row in df.iterrows():
-        if d in existing:
-            continue
-        session.add(PriceBar(
-            stock_id=stock.id, date=d,
-            open=float(row["open"]), high=float(row["high"]),
-            low=float(row["low"]), close=float(row["close"]),
-            volume=float(row["volume"] or 0),
-        ))
-        n += 1
-    return n
+        o, h, l, c = (float(row["open"]), float(row["high"]),
+                      float(row["low"]), float(row["close"]))
+        v = 0.0 if pd.isna(row["volume"]) else float(row["volume"])
+        bar = existing.get(d)
+        if bar is None:
+            session.add(PriceBar(stock_id=stock.id, date=d, open=o, high=h,
+                                 low=l, close=c, volume=v))
+            changed += 1
+        elif (bar.open, bar.high, bar.low, bar.close, bar.volume) != (o, h, l, c, v):
+            # Adjustment baseline shifted (split/dividend) — rewrite in place.
+            bar.open, bar.high, bar.low, bar.close, bar.volume = o, h, l, c, v
+            changed += 1
+    return changed
 
 
 def run_ingest() -> None:
@@ -68,8 +73,8 @@ def run_ingest() -> None:
                 n = ingest_symbol(s, provider, symbol)
             total += n
             if n:
-                log.info("%s: +%d bars", symbol, n)
+                log.info("%s: %d bars written/updated", symbol, n)
         except Exception as e:  # one bad ticker shouldn't kill the run
             log.warning("%s failed: %s", symbol, e)
         time.sleep(0.5)  # be polite to Yahoo, avoids rate limiting
-    log.info("Ingest complete: %d new bars", total)
+    log.info("Ingest complete: %d bars written/updated", total)
