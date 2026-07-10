@@ -3,6 +3,7 @@
   python -m app.main init-db          create tables + default settings
   python -m app.main ingest           fetch EOD data now
   python -m app.main signals          scan + notify now
+  python -m app.main portfolio        apply signals to the paper book + snapshot
   python -m app.main backtest [name]  backtest strategy across universe
   python -m app.main set-strategy X   switch active strategy
   python -m app.main run              scheduler mode (Docker default)
@@ -22,8 +23,10 @@ log = logging.getLogger("main")
 def nightly_job():
     from .ingest import run_ingest
     from .signals import run_signals
+    from .portfolio import run_portfolio
     run_ingest()
     run_signals()
+    run_portfolio()
 
 
 def run_scheduler():
@@ -53,6 +56,9 @@ def main():
     elif cmd == "signals":
         from .signals import run_signals
         run_signals()
+    elif cmd == "portfolio":
+        from .portfolio import run_portfolio
+        run_portfolio()
     elif cmd == "backtest":
         from .backtest import backtest_universe
         backtest_universe(sys.argv[2] if len(sys.argv) > 2 else None)

@@ -20,4 +20,12 @@ MIN_BARS = int(os.getenv("MIN_BARS", "120"))
 # on the next run instead of silently dropping the intervening transitions.
 SIGNAL_LOOKBACK_DAYS = int(os.getenv("SIGNAL_LOOKBACK_DAYS", "7"))
 
+# ---- Paper portfolio (Phase 2 §2.3) — see docs/phase2_specs.md ----
+# Initial cash (₹), applied once when the first snapshot is written.
+STARTING_CAPITAL = float(os.getenv("STARTING_CAPITAL", "1000000"))
+# Fraction of current equity deployed on each BUY (% of equity sizing).
+ALLOC_PCT = float(os.getenv("ALLOC_PCT", "0.10"))
+# Cap on concurrent open positions (bounds ALLOC_PCT × MAX_POSITIONS).
+MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", "10"))
+
 TZ = os.getenv("TZ", "Asia/Kolkata")

@@ -86,6 +86,21 @@ class Position(Base):
     realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class PortfolioSnapshot(Base):
+    """One row per day; all period stats (§2.4) derive from this table.
+    daily P&L = equity[t] - equity[t-1], which telescopes so any period's
+    P&L equals equity_end - equity_start. See docs/phase2_specs.md."""
+    __tablename__ = "portfolio_snapshots"
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    cash: Mapped[float] = mapped_column(Float)
+    invested: Mapped[float] = mapped_column(Float)          # Σ open cost basis
+    market_value: Mapped[float] = mapped_column(Float)      # Σ qty · that-day close
+    equity: Mapped[float] = mapped_column(Float)            # cash + market_value
+    realized_pnl_cum: Mapped[float] = mapped_column(Float)  # Σ closed realized_pnl
+    unrealized_pnl: Mapped[float] = mapped_column(Float)    # market_value − invested
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class WatchlistItem(Base):
     __tablename__ = "watchlist"
     id: Mapped[int] = mapped_column(primary_key=True)
