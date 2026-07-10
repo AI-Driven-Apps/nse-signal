@@ -1,0 +1,16 @@
+services:
+  backstage:
+    build: .
+    container_name: backstage-trader
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=Asia/Kolkata
+    volumes:
+      - ./data:/data          # SQLite DB persists here — back this folder up
+    mem_limit: 512m           # keep the Pi responsive for your YT pipeline
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
