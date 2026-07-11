@@ -106,7 +106,7 @@ def test_login_success_grants_overview_access(db):
     r = client.post("/login", data={"username": "test_admin", "password": "test_password_123"})
     assert r.status_code == 302
     assert r.headers["location"] == "/"
-    assert "backstage_session" in client.cookies
+    assert "nse_signal_session" in client.cookies
 
     r2 = client.get("/")
     assert r2.status_code == 200
@@ -120,4 +120,4 @@ def test_login_wrong_password_rejected(db):
 
     r = client.post("/login", data={"username": "test_admin", "password": "wrong"})
     assert r.status_code == 401
-    assert "backstage_session" not in client.cookies
+    assert "nse_signal_session" not in client.cookies

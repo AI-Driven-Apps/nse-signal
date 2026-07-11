@@ -3,7 +3,7 @@ because app.db creates the engine at import time."""
 import os
 import tempfile
 
-_fd, _path = tempfile.mkstemp(prefix="backstage_test_", suffix=".db")
+_fd, _path = tempfile.mkstemp(prefix="nse_signal_test_", suffix=".db")
 os.close(_fd)
 os.environ["DATABASE_URL"] = f"sqlite:///{_path}"
 os.environ["DISCORD_WEBHOOK_URL"] = ""  # never hit the network from tests

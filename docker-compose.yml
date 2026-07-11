@@ -1,7 +1,7 @@
 services:
-  backstage:
+  nse-signal:
     build: .
-    container_name: backstage-trader
+    container_name: nse-signal-trader
     restart: unless-stopped
     env_file: .env
     environment:

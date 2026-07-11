@@ -1,4 +1,4 @@
-# CLAUDE.md — Backstage (NSE strategy backtesting + signal system)
+# CLAUDE.md — nse-signal (NSE strategy backtesting + signal system)
 
 ## What this project is
 

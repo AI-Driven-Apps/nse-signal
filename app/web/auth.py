@@ -17,7 +17,7 @@ from ..models import User
 
 log = logging.getLogger("auth")
 
-COOKIE_NAME = "backstage_session"
+COOKIE_NAME = "nse_signal_session"
 
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_WINDOW_SECONDS = 15 * 60
@@ -30,7 +30,7 @@ def _serializer() -> URLSafeTimedSerializer:
             "SESSION_SECRET is not set — required to sign session cookies. "
             "Set it in .env (any long random string)."
         )
-    return URLSafeTimedSerializer(SESSION_SECRET, salt="backstage-session")
+    return URLSafeTimedSerializer(SESSION_SECRET, salt="nse-signal-session")
 
 
 def hash_password(plain: str) -> str:

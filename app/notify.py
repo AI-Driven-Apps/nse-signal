@@ -21,7 +21,7 @@ def send_signal(symbol: str, action: str, price: float, strategy: str, when) -> 
             {"name": "Strategy", "value": strategy, "inline": True},
             {"name": "Date", "value": str(when), "inline": True},
         ],
-        "footer": {"text": "Backstage · paper trading · not financial advice"},
+        "footer": {"text": "nse-signal · paper trading · not financial advice"},
     }
     try:
         r = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
