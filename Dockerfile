@@ -14,4 +14,7 @@ COPY app ./app
 # SQLite lives on a mounted volume at /data
 VOLUME ["/data"]
 
+# Dashboard (Phase 2 §2.1) — same container, same process as the scheduler
+EXPOSE 8000
+
 CMD ["python", "-m", "app.main", "run"]

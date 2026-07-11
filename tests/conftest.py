@@ -7,6 +7,9 @@ _fd, _path = tempfile.mkstemp(prefix="backstage_test_", suffix=".db")
 os.close(_fd)
 os.environ["DATABASE_URL"] = f"sqlite:///{_path}"
 os.environ["DISCORD_WEBHOOK_URL"] = ""  # never hit the network from tests
+os.environ["SESSION_SECRET"] = "test-secret-not-for-prod"
+os.environ["ADMIN_USER"] = "test_admin"
+os.environ["ADMIN_PASSWORD"] = "test_password_123"
 
 import numpy as np
 import pandas as pd

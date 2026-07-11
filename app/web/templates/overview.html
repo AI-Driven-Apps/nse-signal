@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Overview — Backstage{% endblock %}
+{% block content %}
+<h1>Overview</h1>
+
+{% if mood %}
+<p>
+  Market mood:
+  <span class="badge badge-{{ mood.label|lower }}">{{ "%.0f"|format(mood.composite) }} &middot; {{ mood.label }}</span>
+</p>
+{% endif %}
+
+{% if snapshot %}
+<div class="cards">
+  <div class="card">
+    <div class="label">Total invested</div>
+    <div class="value">₹{{ "{:,.0f}".format(snapshot.invested) }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Current value</div>
+    <div class="value">₹{{ "{:,.0f}".format(snapshot.equity) }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Unrealized P/L</div>
+    <div class="value {{ 'pos' if snapshot.unrealized_pnl >= 0 else 'neg' }}">
+      ₹{{ "{:,.0f}".format(snapshot.unrealized_pnl) }}
+    </div>
+  </div>
+  <div class="card">
+    <div class="label">Realized P/L</div>
+    <div class="value {{ 'pos' if snapshot.realized_pnl_cum >= 0 else 'neg' }}">
+      ₹{{ "{:,.0f}".format(snapshot.realized_pnl_cum) }}
+    </div>
+  </div>
+</div>
+{% else %}
+<p>No portfolio snapshot yet — the paper book starts after the first nightly run.</p>
+{% endif %}
+
+<canvas id="equityChart" height="90"></canvas>
+
+<div class="movers">
+  <div>
+    <h3>Top gainers</h3>
+    <table>
+      <tr><th>Symbol</th><th>Close</th><th>1d %</th></tr>
+      {% for m in gainers %}
+      <tr><td>{{ m.symbol }}</td><td>₹{{ "%.2f"|format(m.last_close) }}</td>
+          <td class="pos">+{{ "%.2f"|format(m.pct_change) }}%</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div>
+    <h3>Top losers</h3>
+    <table>
+      <tr><th>Symbol</th><th>Close</th><th>1d %</th></tr>
+      {% for m in losers %}
+      <tr><td>{{ m.symbol }}</td><td>₹{{ "%.2f"|format(m.last_close) }}</td>
+          <td class="neg">{{ "%.2f"|format(m.pct_change) }}%</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  const labels = {{ equity_dates|tojson }};
+  const values = {{ equity_values|tojson }};
+  new Chart(document.getElementById('equityChart'), {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'Equity', data: values, borderColor: '#2ECC71',
+            tension: 0.15, pointRadius: 0 }] },
+    options: { plugins: { legend: { display: false } },
+               scales: { y: { beginAtZero: false } } },
+  });
+</script>
+{% endblock %}

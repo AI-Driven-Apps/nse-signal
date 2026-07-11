@@ -17,7 +17,7 @@ from .config import BACKFILL_DAYS
 from .data_provider import get_provider
 from .db import session_scope
 from .models import PriceBar, Stock
-from .universe import get_universe
+from .universe import get_indices, get_universe
 
 log = logging.getLogger("ingest")
 
@@ -64,10 +64,10 @@ def ingest_symbol(session, provider, symbol: str) -> int:
     return changed
 
 
-def run_ingest() -> None:
+def _ingest_symbols(symbols: list[str], label: str) -> int:
     provider = get_provider()
     total = 0
-    for symbol in get_universe():
+    for symbol in symbols:
         try:
             with session_scope() as s:
                 n = ingest_symbol(s, provider, symbol)
@@ -77,4 +77,16 @@ def run_ingest() -> None:
         except Exception as e:  # one bad ticker shouldn't kill the run
             log.warning("%s failed: %s", symbol, e)
         time.sleep(0.5)  # be polite to Yahoo, avoids rate limiting
-    log.info("Ingest complete: %d bars written/updated", total)
+    log.info("%s ingest complete: %d bars written/updated", label, total)
+    return total
+
+
+def run_ingest() -> None:
+    _ingest_symbols(get_universe(), "Universe")
+
+
+def run_ingest_indices() -> None:
+    """Nifty + India VIX, for the fear & greed composite (§2.2). Kept
+    separate from run_ingest so the tradable universe and index feed can
+    fail/log independently."""
+    _ingest_symbols(get_indices(), "Indices")

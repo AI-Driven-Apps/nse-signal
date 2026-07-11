@@ -86,6 +86,20 @@ class Position(Base):
     realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class MarketMood(Base):
+    """Daily India fear & greed composite (§2.2). Component scores are
+    nullable — a component with insufficient data is dropped and the
+    composite is renormalized over the rest (see app/mood.py)."""
+    __tablename__ = "market_mood"
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    vix_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    momentum_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    adv_decline_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    composite: Mapped[float] = mapped_column(Float)
+    label: Mapped[str] = mapped_column(String(8))  # Fear | Neutral | Greed
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class PortfolioSnapshot(Base):
     """One row per day; all period stats (§2.4) derive from this table.
     daily P&L = equity[t] - equity[t-1], which telescopes so any period's

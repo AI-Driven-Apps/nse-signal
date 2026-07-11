@@ -1,6 +1,7 @@
 """Trading universe: Nifty 50 (.NS Yahoo Finance suffixes).
 Keeping the universe small keeps ingest + nightly strategy runs fast on the Pi.
 Edit freely, or later load from the watchlist table."""
+from .config import NIFTY_SYMBOL, VIX_SYMBOL
 
 NIFTY50 = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
@@ -18,3 +19,10 @@ NIFTY50 = [
 
 def get_universe() -> list[str]:
     return NIFTY50
+
+
+def get_indices() -> list[str]:
+    """Index tickers for the fear & greed composite (§2.2). Ingested into
+    price_bars like any other symbol but kept out of get_universe() — not
+    tradable, not scanned for signals, not backtested."""
+    return [NIFTY_SYMBOL, VIX_SYMBOL]

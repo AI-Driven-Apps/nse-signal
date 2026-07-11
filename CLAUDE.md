@@ -60,10 +60,11 @@ Scheduler (IST): ingest + signals Mon–Fri 18:30; universe backtest Sun 10:00.
 **Stack:** FastAPI + Jinja2 templates + HTMX + Chart.js (CDN). Server-rendered,
 same container, one new port (8000) exposed on the Pi/LAN only.
 
-### 2.1 Auth
-- Single user. `users` table exists; hash passwords with **argon2 or bcrypt**
-  (add `passlib[bcrypt]`), signed session cookie (`itsdangerous` or FastAPI
-  session middleware), HttpOnly + SameSite=Lax.
+### 2.1 Auth — implemented, see app/web/
+- Single user. `users` table exists; hash passwords with **bcrypt directly**
+  (not passlib — its CryptContext self-test breaks under bcrypt>=4.1, a known,
+  unresolved compat bug in an effectively unmaintained library), signed
+  session cookie (`itsdangerous`), HttpOnly + SameSite=Lax.
 - First-boot bootstrap: create user from `ADMIN_USER` / `ADMIN_PASSWORD` env
   vars if the table is empty, then require login for every route.
 - Rate-limit the login endpoint (simple in-memory counter is fine, e.g.

@@ -8,6 +8,8 @@ services:
       - TZ=Asia/Kolkata
     volumes:
       - ./data:/data          # SQLite DB persists here — back this folder up
+    ports:
+      - "8000:8000"           # dashboard — LAN only, do not forward on your router
     mem_limit: 512m           # keep the Pi responsive for your YT pipeline
     logging:
       driver: json-file
