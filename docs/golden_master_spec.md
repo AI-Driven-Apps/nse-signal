@@ -174,3 +174,9 @@ Via Docker: `docker compose run --rm golden-master python -m golden_master.main 
   in the main engine.
 - A second, longer-history intraday data source once/if yfinance's ~60-day
   cap proves limiting for backtesting recent strategy performance.
+
+
+# Manual run
+Force one poll cycle right now, regardless of schedule/market hours,
+  #    to test the whole pipeline immediately without waiting:
+  docker exec golden-master python -m golden_master.main live-once
