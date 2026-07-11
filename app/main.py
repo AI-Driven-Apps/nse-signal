@@ -2,6 +2,7 @@
 
   python -m app.main init-db          create tables + default settings
   python -m app.main ingest           fetch EOD data now
+  python -m app.main ingest-indices   fetch Nifty/VIX index data now (mood needs this)
   python -m app.main signals          scan + notify now
   python -m app.main portfolio        apply signals to the paper book + snapshot
   python -m app.main mood             compute + store today's fear & greed score
@@ -74,6 +75,9 @@ def main():
     elif cmd == "ingest":
         from .ingest import run_ingest
         run_ingest()
+    elif cmd == "ingest-indices":
+        from .ingest import run_ingest_indices
+        run_ingest_indices()
     elif cmd == "signals":
         from .signals import run_signals
         run_signals()
