@@ -5,10 +5,21 @@ Long-only, paper-trading. Universe: Nifty 50 (edit `app/universe.py`).
 
 > **Upgrading from the old "Backstage" name?** The container and service name
 > changed and the default DB filename changed from `backstage.db` to
-> `nse_signal.db`. On your existing deploy, before restarting, run:
-> `mv data/backstage.db data/nse_signal.db` — otherwise the app starts with
-> an empty database. `docker compose down` then `docker compose up -d --build`
-> to pick up the new container/service name cleanly.
+> `nse_signal.db`. On your existing deploy, before restarting:
+> 1. `mv data/backstage.db data/nse_signal.db`
+> 2. **Check your `.env` file for an explicit `DATABASE_URL=` line** — if you
+>    set one up via `cp .env.example .env`, it has the old `backstage.db`
+>    path hardcoded and will keep pointing there regardless of step 1 or any
+>    code default change. Update it to `sqlite:////data/nse_signal.db` (or
+>    remove the line entirely to fall back to the current default).
+> 3. `docker compose down` then `docker compose up -d --build` to pick up
+>    the new container/service name and the `.env` change cleanly.
+>
+> Skipping step 2 is the failure mode to watch for: the app starts fine, logs
+> show no errors, but every page loads with no data — because it's silently
+> reading a brand-new empty database at the old path while your real data
+> sits untouched at the new one. Confirm with:
+> `docker exec nse-signal-trader env | grep DATABASE_URL`.
 
 ## Deploy on the Pi
 
