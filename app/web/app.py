@@ -50,7 +50,7 @@ def create_app() -> FastAPI:
     with session_scope() as s:
         bootstrap_admin(s)
 
-    app = FastAPI(title="nse-signal")
+    app = FastAPI(title="NSE-Signal")
 
     @app.exception_handler(NotAuthenticated)
     def _redirect_to_login(request: Request, exc: NotAuthenticated):
