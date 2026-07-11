@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Watchlist — Backstage{% endblock %}
+{% block content %}
+<h1>Watchlist</h1>
+
+<form method="post" action="/watchlist/add">
+  <label>Add symbol
+    <input type="text" name="symbol" list="known-symbols" placeholder="RELIANCE.NS" required>
+  </label>
+  <datalist id="known-symbols">
+    {% for sym in known_symbols %}<option value="{{ sym }}">{% endfor %}
+  </datalist>
+  <button type="submit">Add</button>
+</form>
+{% if error %}<p class="err">{{ error }}</p>{% endif %}
+
+{% if watchlist %}
+<table>
+  <tr><th></th><th>Symbol</th><th>Last close</th><th>1d %</th><th>Position</th><th></th></tr>
+  {% for w in watchlist %}
+  <tr>
+    <td>
+      <form method="post" action="/watchlist/star/{{ w.id }}">
+        <button type="submit" class="star">{{ '★' if w.starred else '☆' }}</button>
+      </form>
+    </td>
+    <td>{{ w.symbol }}</td>
+    <td>{{ "₹%.2f"|format(w.last_close) if w.last_close is not none else '—' }}</td>
+    <td class="{{ 'pos' if w.pct_change and w.pct_change >= 0 else 'neg' }}">
+      {{ "%.2f%%"|format(w.pct_change) if w.pct_change is not none else '—' }}
+    </td>
+    <td>{{ w.position_state }}</td>
+    <td class="row-actions">
+      <form method="post" action="/watchlist/remove/{{ w.id }}">
+        <button type="submit">Remove</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">Your watchlist is empty.</p>
+{% endif %}
+
+<h3>Suggested stocks</h3>
+<p class="muted">Ranked by your active strategy &mdash; not advice.</p>
+{% if suggestions %}
+<table>
+  <tr><th>Symbol</th><th>6mo momentum</th><th>Sharpe</th><th>Score</th></tr>
+  {% for s in suggestions %}
+  <tr>
+    <td>{{ s.symbol }}</td>
+    <td class="{{ 'pos' if s.momentum_pct >= 0 else 'neg' }}">{{ "%.1f%%"|format(s.momentum_pct) }}</td>
+    <td>{{ "%.2f"|format(s.sharpe) }}</td>
+    <td>{{ "%.2f"|format(s.score) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">Run a backtest for the active strategy first (see the Strategy page).</p>
+{% endif %}
+{% endblock %}

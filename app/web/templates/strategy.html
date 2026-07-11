@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Strategy — Backstage{% endblock %}
+{% block content %}
+<h1>Strategy</h1>
+
+{% if message %}<p class="ok">{{ message }}</p>{% endif %}
+{% if running %}<p class="muted">Backtest running for '{{ running }}'&hellip; refresh to check.</p>{% endif %}
+
+<table>
+  <tr><th>Strategy</th><th>As of</th><th>Symbols</th><th>Avg CAGR</th><th>Avg max DD</th><th>Avg Sharpe</th><th>Avg win rate</th><th></th></tr>
+  {% for name in strategies %}
+  {% set m = metrics.get(name) %}
+  <tr>
+    <td>{{ name }}{% if name == active_strategy %} &middot; <strong>active</strong>{% endif %}</td>
+    {% if m %}
+    <td>{{ m.as_of }}</td>
+    <td>{{ m.n_symbols }}</td>
+    <td class="{{ 'pos' if m.avg_cagr >= 0 else 'neg' }}">{{ "%.1f"|format(m.avg_cagr * 100) }}%</td>
+    <td class="neg">{{ "%.1f"|format(m.avg_max_dd * 100) }}%</td>
+    <td>{{ "%.2f"|format(m.avg_sharpe) }}</td>
+    <td>{{ "%.0f"|format(m.avg_win_rate * 100) }}%</td>
+    {% else %}
+    <td colspan="5" class="muted">Not backtested yet</td>
+    {% endif %}
+    <td>
+      <form method="post" action="/strategy/backtest">
+        <input type="hidden" name="name" value="{{ name }}">
+        <button type="submit" {{ 'disabled' if running else '' }}>Run backtest now</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h3>Switch active strategy</h3>
+<form method="post" action="/strategy/set">
+  <select name="name">
+    {% for name in strategies %}
+    <option value="{{ name }}" {{ 'selected' if name == active_strategy else '' }}>{{ name }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Switch</button>
+</form>
+{% endblock %}

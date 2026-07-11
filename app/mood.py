@@ -13,13 +13,13 @@ import logging
 from datetime import date
 
 import pandas as pd
-from sqlalchemy import select
 
 from .config import (
     AD_WINDOW, MOM_BAND, MOM_SMA, NIFTY_SYMBOL, VIX_SYMBOL, VIX_WINDOW,
     W_AD, W_MOM, W_VIX,
 )
-from .models import MarketMood, PriceBar, Stock
+from .models import MarketMood
+from .prices import closes_for_symbol
 from .universe import get_universe
 
 log = logging.getLogger("mood")
@@ -81,29 +81,13 @@ def composite_and_label(scores: dict[str, float | None],
     return comp, label
 
 
-def _closes_for_symbol(session, symbol: str, as_of: date, lookback_bars: int) -> pd.Series:
-    stock = session.execute(select(Stock).where(Stock.symbol == symbol)).scalar_one_or_none()
-    if not stock:
-        return pd.Series(dtype=float)
-    rows = session.execute(
-        select(PriceBar.date, PriceBar.close)
-        .where(PriceBar.stock_id == stock.id, PriceBar.date <= as_of)
-        .order_by(PriceBar.date.desc())
-        .limit(lookback_bars)
-    ).all()
-    if not rows:
-        return pd.Series(dtype=float)
-    rows.reverse()  # ascending date
-    return pd.Series([r.close for r in rows], index=[r.date for r in rows])
-
-
 def compute_and_store_mood(session, as_of: date | None = None) -> MarketMood | None:
     as_of = as_of or date.today()
 
-    nifty = _closes_for_symbol(session, NIFTY_SYMBOL, as_of, MOM_SMA + 5)
-    vix = _closes_for_symbol(session, VIX_SYMBOL, as_of, VIX_WINDOW + 5)
+    nifty = closes_for_symbol(session, NIFTY_SYMBOL, as_of, MOM_SMA + 5)
+    vix = closes_for_symbol(session, VIX_SYMBOL, as_of, VIX_WINDOW + 5)
     universe_closes = {
-        sym: _closes_for_symbol(session, sym, as_of, AD_WINDOW + 1)
+        sym: closes_for_symbol(session, sym, as_of, AD_WINDOW + 1)
         for sym in get_universe()
     }
 

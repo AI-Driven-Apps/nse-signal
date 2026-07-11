@@ -73,44 +73,60 @@ same container, one new port (8000) exposed on the Pi/LAN only.
 ### 2.2 Overview page
 - Metric cards: **total investment** (sum of open positions cost),
   **current value**, **unrealized P/L**, **realized P/L** (from `positions`).
-- **Fear & greed badge** (0–100, Fear <40 / Neutral 40–60 / Greed >60),
-  computed for the Indian market — do NOT use CNN's US index. Composite of:
+- **Fear & greed badge** — implemented, see `app/mood.py` (0–100, Fear <40 /
+  Neutral 40–60 / Greed >60). Composite of:
   - India VIX level vs its 90-day range (inverted),
   - Nifty 50 close vs its 125-day SMA (momentum),
   - universe advance/decline ratio over the last 5 sessions.
-  Fetch `^NSEI` and `^INDIAVIX` through `DataProvider`; store the daily score
-  in a new `market_mood` table so history is chartable.
-- **Top gainers and losers**: top 5 each by 1-day % change across the
-  universe, from `price_bars` (no extra API calls).
-- Equity curve chart (Chart.js) from portfolio snapshots.
+  `^NSEI`/`^INDIAVIX` ingested via `app/ingest.run_ingest_indices()` (a
+  separate indices list, `app/universe.get_indices()` — not in the tradable
+  universe); daily score stored in `market_mood`, upserted by date.
+- **Top gainers and losers** — implemented (`app/web/data.top_movers`): top 5
+  each by 1-day % change across the universe, from `price_bars`.
+- Equity curve chart (Chart.js) from portfolio snapshots — implemented.
 
-### 2.3 Paper portfolio + snapshots
-- New nightly step after signals: apply signals to the paper portfolio
-  (BUY opens a position with a fixed allocation, e.g. `CAPITAL_PER_TRADE`
-  env var; SELL closes it and books realized P/L into `positions`).
-- New `portfolio_snapshots` table: one row per day (date, invested, value,
-  realized_pnl, unrealized_pnl). **All period stats derive from this table.**
+### 2.3 Paper portfolio + snapshots — implemented, see app/portfolio.py
+- Nightly step after signals: apply signals to the paper portfolio. Sizing is
+  **% of current equity** (`ALLOC_PCT`, not a fixed amount — a deliberate
+  deviation from this doc's original "e.g. CAPITAL_PER_TRADE" suggestion,
+  decided with the project owner), capped at `MAX_POSITIONS` concurrent
+  positions. SELL closes the position and books `realized_pnl`. Idempotent via
+  a `paper_cursor` settings watermark (highest applied `Signal.id`) — see
+  docs/phase2_specs.md for why position-state guards alone aren't enough.
+- `portfolio_snapshots` table: one row per day, upserted by date. Daily P&L =
+  `equity[t]-equity[t-1]` telescopes, so any period's P&L is just
+  `equity_end - equity_start` — the basis for §2.4.
 
-### 2.4 Statistics tabs
-- Daily / Weekly / Monthly / Quarterly / Yearly returns and P/L, computed by
-  SQL aggregation over `portfolio_snapshots`. No new state, no caching layer.
+### 2.4 Statistics tabs — implemented, see app/web/data.period_stats + /stats
+- Daily / Weekly / Monthly / Quarterly / Yearly returns and P/L, computed in
+  Python (pandas resample) over `portfolio_snapshots` rather than a raw SQL
+  aggregation — no new state, no caching layer, and the telescoping identity
+  above makes the aggregation trivial and exact regardless of gaps.
 
-### 2.5 Strategy switcher
+### 2.5 Strategy switcher — implemented, see /strategy
 - Dropdown listing `STRATEGIES` keys; selecting writes
-  `settings.active_strategy`. Show, per strategy, latest aggregate backtest
-  metrics from `backtest_runs` (avg CAGR, max DD, Sharpe, win rate) so
-  switching is an informed choice. A "run backtest now" button may enqueue
-  `backtest_universe()` in a background thread — never block the request.
+  `settings.active_strategy`. Shows, per strategy, aggregate backtest metrics
+  from the **most recent** `backtest_universe()` run only (identified by max
+  `end_date` per strategy — every symbol in one run shares the same end_date
+  — not an all-time average, which would blur weekly re-runs together). A
+  "run backtest now" button enqueues `backtest_universe()` on a plain daemon
+  thread (`app/web/tasks.py`) — one at a time, never blocks the request.
 
-### 2.6 Watchlist + suggestions
-- Watchlist CRUD (add by symbol with `.NS` autocomplete from `stocks`,
-  remove, star). Watchlist rows show last close, 1-day change, and current
-  strategy position state (holding / flat).
-- "Suggested stocks": rank universe by a transparent score
-  (e.g. 0.5 × 6-month momentum + 0.5 × latest backtest Sharpe for the active
-  strategy). Label clearly: *"Ranked by your active strategy — not advice."*
+### 2.6 Watchlist + suggestions — implemented, see /watchlist
+- Watchlist CRUD (add by symbol, `.NS` auto-appended + `<datalist>`
+  autocomplete from `stocks`, remove, star — `WatchlistItem.starred` added to
+  the model). Rows show last close, 1-day change, and current strategy
+  position state (holding / flat).
+- "Suggested stocks": ranks the universe by 0.5 × 6-month momentum
+  + 0.5 × latest backtest Sharpe for the active strategy — **both terms
+  min-max normalized to [0,1] before blending** (a deviation from this doc's
+  literal formula: raw momentum is a % return and raw Sharpe a unitless
+  ratio on a very different scale, so blending them unnormalized would let
+  whichever has the larger numeric range dominate the score). Needs a
+  backtest to exist for the active strategy; empty otherwise. Labeled
+  *"Ranked by your active strategy — not advice."*
 
-### 2.7 Signals page
+### 2.7 Signals page — implemented, see /signals
 - Table of recent signals (date, symbol, action, price, strategy,
   Discord-sent status) with a manual "re-send to Discord" per row.
 

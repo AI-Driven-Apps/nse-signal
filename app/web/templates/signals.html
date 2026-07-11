@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Signals — Backstage{% endblock %}
+{% block content %}
+<h1>Recent signals</h1>
+
+{% if signals %}
+<table>
+  <tr><th>Date</th><th>Symbol</th><th>Action</th><th>Price</th><th>Strategy</th><th>Discord</th><th></th></tr>
+  {% for sig in signals %}
+  <tr>
+    <td>{{ sig.date }}</td>
+    <td>{{ sig.symbol }}</td>
+    <td class="{{ 'pos' if sig.action == 'BUY' else 'neg' }}">{{ sig.action }}</td>
+    <td>₹{{ "%.2f"|format(sig.price) }}</td>
+    <td>{{ sig.strategy }}</td>
+    <td>{{ 'sent' if sig.sent_to_discord else 'not sent' }}</td>
+    <td>
+      <form method="post" action="/signals/resend/{{ sig.id }}">
+        <button type="submit">Re-send to Discord</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No signals yet.</p>
+{% endif %}
+{% endblock %}

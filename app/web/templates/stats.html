@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Stats — Backstage{% endblock %}
+{% block content %}
+<h1>Period stats</h1>
+
+<div class="tabs">
+  {% for p in ["daily", "weekly", "monthly", "quarterly", "yearly"] %}
+  <a href="/stats?period={{ p }}" class="{{ 'active' if p == period else '' }}">{{ p|capitalize }}</a>
+  {% endfor %}
+</div>
+
+{% if rows %}
+<table>
+  <tr><th>Period ending</th><th>Start equity</th><th>End equity</th><th>P/L</th><th>Return</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.period }}</td>
+    <td>₹{{ "{:,.0f}".format(r.start_equity) }}</td>
+    <td>₹{{ "{:,.0f}".format(r.end_equity) }}</td>
+    <td class="{{ 'pos' if r.pnl >= 0 else 'neg' }}">₹{{ "{:,.0f}".format(r.pnl) }}</td>
+    <td class="{{ 'pos' if r.return_pct >= 0 else 'neg' }}">{{ "%.2f"|format(r.return_pct) }}%</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No portfolio snapshots yet — stats appear after the first nightly run.</p>
+{% endif %}
+{% endblock %}
