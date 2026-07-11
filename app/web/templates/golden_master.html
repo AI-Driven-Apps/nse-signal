@@ -6,9 +6,10 @@
   Intraday Nifty options (CE/PE) strategy &mdash; a separate, dedicated subsystem
   (own container, own database). P/L below is in Nifty index points, not real
   option premium: no options-chain/Greeks data source is modeled, so a real
-  trade's P&amp;L would differ due to premium/theta/IV effects. No live data
-  source is wired up yet &mdash; results below come from backtests you run
-  manually against a CSV of historical bars. See docs/golden_master_spec.md.
+  trade's P&amp;L would differ due to premium/theta/IV effects. Trades below
+  are either live (polled from yfinance every ~15 min during market hours,
+  <code>source=live</code>) or from a manual CSV backtest
+  (<code>source=backtest</code>) &mdash; see docs/golden_master_spec.md.
 </p>
 
 {% if not summary %}
@@ -41,12 +42,13 @@
 {% if trades %}
 <table>
   <tr>
-    <th>Date</th><th>Type</th><th>Dir</th><th>Entry</th><th>SL</th><th>Target</th>
+    <th>Date</th><th>Source</th><th>Type</th><th>Dir</th><th>Entry</th><th>SL</th><th>Target</th>
     <th>Exit</th><th>Reason</th><th>P/L (pts)</th><th>CE</th><th>PE</th>
   </tr>
   {% for t in trades %}
   <tr>
     <td>{{ t.trade_date }}</td>
+    <td>{{ t.source }}</td>
     <td>{{ t.signal_type }}</td>
     <td class="{{ 'pos' if t.direction == 'BUY' else 'neg' }}">{{ t.direction }}</td>
     <td>{{ "%.2f"|format(t.entry_price) }}</td>

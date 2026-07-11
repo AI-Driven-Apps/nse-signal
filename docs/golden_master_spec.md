@@ -20,14 +20,17 @@ back from the main spec.
 
 ## Confirmed design decisions
 
-- **Data source deferred.** No live intraday feed is wired up yet (yfinance
-  15-min bars cap around 60 days of lookback and carry real delay/reliability
-  caveats for live use — worse than the daily EOD case elsewhere in this
-  repo). `golden_master/main.py backtest <csv>` accepts externally-sourced
-  15-min OHLC bars via CSV in the meantime, so the engine is genuinely
-  exercisable against real historical data today. Wiring up a live feed is a
-  later, isolated follow-up (add an `IntradayDataProvider`-style module,
-  mirroring `app/data_provider.py`'s `DataProvider` ABC pattern).
+- **Live yfinance intraday feed, added 2026-07-11.** `intraday_provider.py`
+  mirrors `app/data_provider.py`'s `DataProvider` ABC pattern
+  (`IntradayDataProvider` / `YFinanceIntradayProvider`, 15m interval). Still
+  carries the caveats that motivated deferring this in the initial build:
+  yfinance intraday history caps around 60 days of lookback, and real-time
+  index data can lag/be unreliable — `ingest.py` and `live.py` both fail soft
+  (log a warning, skip the cycle) on any fetch error rather than crashing the
+  poll loop, matching `app/ingest.py`'s "one bad fetch should not kill the
+  run" convention. `golden_master/main.py backtest <csv>` still works
+  unchanged for testing against data outside that 60-day window or a
+  different source entirely.
 - **Same Discord webhook** as the main app (`DISCORD_WEBHOOK_URL`), styled
   distinctly (`golden_master/notify.py`: purple embed, "GOLDEN MASTER" title)
   rather than a separate channel.
@@ -105,19 +108,58 @@ actual market price, not a synthetic smoothed HA price.
 ## Schema (`golden_master/models.py`)
 
 - `intraday_bars`: raw OHLC + precomputed HA columns, unique on
-  `(symbol, timestamp)`. Not currently populated by anything (data source
-  deferred) — reserved for when a live/backfill provider is added.
+  `(symbol, timestamp)`. Populated by `ingest.py` (full-window refetch +
+  upsert, mirroring `app/ingest.py`'s pattern) — see the HA-seed note below
+  for why the fetch window is a full month, not just the last few days.
 - `golden_master_trades`: one row per bracket trade, `source` = `backtest`
-  or `live` (same table for both, filterable).
+  or `live` (same table for both, filterable). Live trades are upserted by
+  `(trade_date, signal_type, direction)` — inserted once when a signal first
+  fires (source of a single Discord alert), then updated in place once a
+  later poll resolves the SL/target/EOD outcome. `exit_*`/`pnl_points` are
+  `NULL` while a live trade is still open.
 - `golden_master_backtest_runs`: one row per `backtest` CLI invocation,
-  aggregate stats over the whole range.
+  aggregate stats over the whole range (only ever populated by `backtest`,
+  not by live polling).
+
+## Live trade lifecycle (`golden_master/live.py`)
+
+Reuses `backtest.py::backtest_range()` — the same tested resolution logic —
+called with `treat_last_day_as_incomplete=True` so a signal on "today" (the
+last day present in the loaded window) that hasn't hit SL/target yet is left
+open (`exit_reason=None`) instead of being EOD-squared-off, since the day
+genuinely isn't over. Each poll cycle (`run_live_cycle`):
+
+1. `ingest.py` fetches a fresh 1-month 15-min window for `GM_SYMBOL`
+   (default `^NSEI`) and upserts into `intraday_bars`.
+2. Loads the last `LOOKBACK_DAYS` (5) days of bars from the DB into a plain
+   DataFrame and re-runs `backtest_range(..., treat_last_day_as_incomplete=True)`
+   over the whole window from scratch.
+3. Upserts the resulting trades by `(trade_date, signal_type, direction)`.
+   Brand-new rows trigger exactly one Discord alert; rows that flip from
+   open to resolved are updated silently (no re-alert).
+
+Re-deriving the whole window from scratch every poll — rather than holding
+a `SignalEngine` in memory across polls — means a container restart loses
+nothing: the DB is the source of truth, matching the rest of this project's
+design (idempotent jobs, invariant 6 in `CLAUDE.md`).
+
+**Heikin-Ashi seed note:** HA is a recursive, continuous transform (see
+`heikin_ashi.py`) whose "seed" bar is the first bar of whatever window got
+fetched. `ingest.py` always fetches a full month (not just a few days)
+specifically so that seed sits well before the bars that matter for trading
+— each step halves the seed's influence, so by the time the window reaches
+"today" it has decayed to negligible. A short fetch window right before
+today would put the seed too close to the bars that actually drive signals.
 
 ## CLI (`golden_master/main.py`)
 
 ```
 python -m golden_master.main init-db
 python -m golden_master.main backtest <csv-path>   # columns: timestamp,open,high,low,close
-python -m golden_master.main run                    # idle placeholder until a live feed exists
+python -m golden_master.main ingest                 # one manual intraday fetch
+python -m golden_master.main live-once               # one manual poll cycle
+python -m golden_master.main run                     # scheduler: polls ~every 15 min,
+                                                       # 9:01-15:46 IST, Mon-Fri
 ```
 
 Via Docker: `docker compose run --rm golden-master python -m golden_master.main backtest /data/bars.csv`
@@ -125,11 +167,10 @@ Via Docker: `docker compose run --rm golden-master python -m golden_master.main 
 
 ## Follow-ups (not built yet)
 
-- A live intraday data provider (yfinance 15m or otherwise) + a market-hours
-  polling scheduler in `golden_master/main.py run`, writing to
-  `intraday_bars` and firing live Discord alerts via `notify.py`.
-- Populating `intraday_bars` from CSV imports too (currently `backtest`
-  reads the CSV directly into `backtest_range()` without persisting the raw
-  bars) — worth doing once a live source exists, so backtest and live share
-  one bar history the way `app/portfolio.py` and `app/backtest.py` share
-  `price_bars` in the main engine.
+- Backfilling `intraday_bars` from a CSV import too (currently `backtest`
+  reads a CSV directly into `backtest_range()` without persisting it) — would
+  let a manually-sourced deep history and the live yfinance feed share one
+  table, the way `app/portfolio.py` and `app/backtest.py` share `price_bars`
+  in the main engine.
+- A second, longer-history intraday data source once/if yfinance's ~60-day
+  cap proves limiting for backtesting recent strategy performance.

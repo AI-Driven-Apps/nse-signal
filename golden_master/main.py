@@ -3,20 +3,23 @@
   python -m golden_master.main init-db              create tables
   python -m golden_master.main backtest <csv-path>   replay historical 15-min
                                                       bars through the engine
-  python -m golden_master.main run                   idle placeholder — keeps
-                                                      the container alive until
-                                                      a live data feed exists
+  python -m golden_master.main ingest                fetch recent 15-min bars
+                                                      now (manual/debug)
+  python -m golden_master.main live-once             one live poll cycle now
+                                                      (manual/debug)
+  python -m golden_master.main run                   scheduler mode (Docker
+                                                      default) — polls every
+                                                      15 min during NSE hours
 
-No live intraday data source is wired up yet (deliberately deferred — see
-docs/golden_master_spec.md). `backtest` reads bars from a CSV you supply
-(columns: timestamp,open,high,low,close — timestamp anything pandas can
-parse, ascending, one or more trading days, each day's first row = that
-day's session open) so the strategy engine is genuinely testable against
-real historical data today, independent of that decision.
-"""
+`backtest` also still reads bars from a CSV you supply (columns:
+timestamp,open,high,low,close — ascending, one or more trading days, each
+day's first row = that day's session open) for testing against data outside
+yfinance's ~60-day intraday lookback, or a different symbol/source entirely.
+See docs/golden_master_spec.md for the yfinance reliability caveats that
+motivated deferring this in the initial build, and for the live trade
+lifecycle (backtest_range's treat_last_day_as_incomplete + upsert)."""
 import logging
 import sys
-import time
 
 import pandas as pd
 
@@ -42,15 +45,19 @@ def run_backtest_csv(csv_path: str) -> None:
                  run.n_trades, run.win_rate * 100, run.net_points)
 
 
-def run_idle() -> None:
-    log.warning(
-        "No live data source configured yet — idling. Use "
-        "`docker compose run --rm golden-master python -m golden_master.main "
-        "backtest <csv-path>` to backtest against historical data in the "
-        "meantime. See docs/golden_master_spec.md."
-    )
-    while True:
-        time.sleep(3600)
+def run_scheduler() -> None:
+    from apscheduler.schedulers.blocking import BlockingScheduler
+
+    from .config import TZ
+    from .live import run_live_cycle
+
+    sched = BlockingScheduler(timezone=TZ)
+    # Shortly after each 15-min bar close (9:15-15:30 IST), Mon-Fri, with a
+    # 1-minute buffer for yfinance to publish the just-closed bar.
+    sched.add_job(run_live_cycle, "cron", day_of_week="mon-fri",
+                  hour="9-15", minute="1,16,31,46", misfire_grace_time=300)
+    log.info("Scheduler started (TZ=%s). Polling ~every 15 min, 9:01-15:46 Mon-Fri.", TZ)
+    sched.start()
 
 
 def main():
@@ -65,8 +72,14 @@ def main():
         if len(sys.argv) < 3:
             sys.exit("Usage: python -m golden_master.main backtest <csv-path>")
         run_backtest_csv(sys.argv[2])
+    elif cmd == "ingest":
+        from .ingest import run_ingest
+        run_ingest()
+    elif cmd == "live-once":
+        from .live import run_live_cycle
+        run_live_cycle()
     elif cmd == "run":
-        run_idle()
+        run_scheduler()
     else:
         sys.exit(__doc__)
 

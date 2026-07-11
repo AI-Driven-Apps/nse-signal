@@ -4,7 +4,7 @@ price is known exactly, then varies what happens afterward to exercise
 SL_HIT, TARGET_HIT, the same-bar tie rule, and EOD square-off. SL/target
 touch checks use RAW price (not HA) since that's what a real stop/target
 order fills against — only signal detection is HA-based."""
-from datetime import datetime
+from datetime import date, datetime
 
 import pandas as pd
 import pytest
@@ -120,3 +120,33 @@ def test_store_backtest_persists_trades_and_aggregate_run(db):
     assert run.net_points == pytest.approx(25.0)
     assert run.rejection_trades == 1
     assert run.blue_breakout_trades == 0
+
+
+def test_treat_last_day_as_incomplete_leaves_last_day_signal_open():
+    """Live polling calls backtest_range with this flag: a signal on the
+    LAST day present in the data, not yet resolved by that data's own bars,
+    should be left open rather than EOD-squared-off — the day is not
+    actually over yet, we just have not ingested its later bars."""
+    df = _bull_rejection_df([("10:00", 118.0, 125.0, 115.0, 120.0)])  # no SL/target hit
+    trades = backtest_range(df, treat_last_day_as_incomplete=True)
+    t = trades[0]
+    assert t.exit_reason is None
+    assert t.exit_time is None
+    assert t.exit_price is None
+    assert t.pnl_points is None
+
+
+def test_treat_last_day_as_incomplete_still_resolves_earlier_days():
+    """Only the actual last day in the data is treated as in-progress —
+    once a later day's bar appears, the earlier day resolves normally."""
+    df = _bull_rejection_df([("10:00", 118.0, 125.0, 115.0, 120.0)])
+    later_day = pd.DataFrame({
+        "open": [120.0], "high": [121.0], "low": [119.0], "close": [120.5],
+    }, index=pd.to_datetime(["2024-06-05 09:15"]))
+    df = pd.concat([df, later_day])
+
+    trades = backtest_range(df, treat_last_day_as_incomplete=True)
+    t = trades[0]
+    assert t.trade_date == date(2024, 6, 4)
+    assert t.exit_reason == "EOD_SQUARE_OFF"
+    assert t.exit_price == pytest.approx(120.0)  # last 2024-06-04 bar's close

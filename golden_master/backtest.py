@@ -3,11 +3,20 @@ doesn't apply here (one-shot bracket trades, not a continuous position
 series) — this replays 15-min bars through SignalEngine and, for each fired
 signal, scans forward for the first bar touching SL or target.
 
+Also reused for live trading (golden_master/live.py): the same replay,
+called with treat_last_day_as_incomplete=True so a trade with no SL/target
+hit yet within the LAST calendar day of the input is left open (exit_* =
+None) rather than squared off — since for live polling that last day is
+"now", not a finished trading day. live.py re-runs this on every poll as
+more bars arrive and upserts the result, so the same tested resolution
+logic (including the SL-wins-ties rule) drives both paths.
+
 Resolution rules (see docs/golden_master_spec.md):
 - A single bar touching both SL and target resolves to SL_HIT (conservative,
   matches the project's existing "backtest results overstate live
   performance" stance — checked first in the loop below, so it wins ties).
-- Neither hit by the day's last bar: EOD_SQUARE_OFF at that bar's close.
+- Neither hit by the day's last bar: EOD_SQUARE_OFF at that bar's close
+  (unless that day is the incomplete "today" in live mode — see above).
 - CE/PE strikes are computed from each day's first bar (assumed to be the
   session open) and stored on the trade for reference/labeling only — pnl
   is in Nifty index points, not real option premium.
@@ -35,10 +44,10 @@ class Trade:
     entry_price: float
     sl_price: float
     target_price: float
-    exit_time: datetime
-    exit_price: float
-    exit_reason: str  # SL_HIT | TARGET_HIT | EOD_SQUARE_OFF
-    pnl_points: float
+    exit_time: datetime | None
+    exit_price: float | None
+    exit_reason: str | None  # SL_HIT | TARGET_HIT | EOD_SQUARE_OFF | None (still open)
+    pnl_points: float | None
     ce_strike: float
     pe_strike: float
 
@@ -51,16 +60,24 @@ def _as_date(ts) -> date:
     return _as_datetime(ts).date()
 
 
-def backtest_range(df: pd.DataFrame) -> list[Trade]:
+def backtest_range(df: pd.DataFrame, treat_last_day_as_incomplete: bool = False) -> list[Trade]:
     """df: ascending-time 15-min OHLC bars (open/high/low/close columns),
     one or more trading days. Precondition: each day's first row is that
-    day's session open (used for CE/PE strike selection)."""
+    day's session open (used for CE/PE strike selection).
+
+    treat_last_day_as_incomplete: if True, a signal on the LAST calendar day
+    present in df that hasn't hit SL/target within df's own bars is left
+    open (exit_* = None) instead of EOD-squared-off — for live polling,
+    where the last day is still in progress. Earlier days always resolve
+    normally regardless of this flag."""
     ha = to_heikin_ashi(df)
     engine = SignalEngine()
     trades: list[Trade] = []
     strikes_by_day: dict[date, tuple[float, float]] = {}
 
     rows = list(ha.iterrows())
+    last_date = _as_date(rows[-1][0]) if rows else None
+
     for i, (ts, row) in enumerate(rows):
         d = _as_date(ts)
         if d not in strikes_by_day:
@@ -101,19 +118,27 @@ def backtest_range(df: pd.DataFrame) -> list[Trade]:
                 exit_time, exit_price, exit_reason = ts2, target_price, "TARGET_HIT"
                 break
 
+        still_open = False
         if exit_time is None:
-            exit_time = last_same_day_ts
-            exit_price = float(last_same_day_close)
-            exit_reason = "EOD_SQUARE_OFF"
+            if treat_last_day_as_incomplete and d == last_date:
+                still_open = True
+            else:
+                exit_time = last_same_day_ts
+                exit_price = float(last_same_day_close)
+                exit_reason = "EOD_SQUARE_OFF"
 
-        pnl = ((exit_price - signal.entry_price) if signal.direction == "BUY"
-              else (signal.entry_price - exit_price))
+        if still_open:
+            pnl = None
+        else:
+            pnl = ((exit_price - signal.entry_price) if signal.direction == "BUY"
+                  else (signal.entry_price - exit_price))
 
         trades.append(Trade(
             trade_date=d, signal_type=signal.signal_type, direction=signal.direction,
             entry_time=signal.entry_time, entry_price=signal.entry_price,
             sl_price=sl_price, target_price=target_price,
-            exit_time=_as_datetime(exit_time), exit_price=exit_price, exit_reason=exit_reason,
+            exit_time=None if still_open else _as_datetime(exit_time),
+            exit_price=exit_price, exit_reason=exit_reason,
             pnl_points=pnl, ce_strike=ce_strike, pe_strike=pe_strike,
         ))
     return trades
@@ -121,7 +146,11 @@ def backtest_range(df: pd.DataFrame) -> list[Trade]:
 
 def store_backtest(session, trades: list[Trade], start_date: date, end_date: date) -> GoldenMasterBacktestRun:
     """Persist trades + one aggregate run row. Fixed 1:1 SL:target means win
-    rate alone determines edge before costs — it's the headline metric."""
+    rate alone determines edge before costs — it's the headline metric.
+    Aggregates only count resolved trades (pnl_points is not None); with the
+    default treat_last_day_as_incomplete=False every trade is resolved, but
+    this stays defensive in case a caller passes an incomplete-day replay."""
+    resolved = [t for t in trades if t.pnl_points is not None]
     for t in trades:
         session.add(GoldenMasterTrade(
             trade_date=t.trade_date, signal_type=t.signal_type, direction=t.direction,
@@ -131,14 +160,14 @@ def store_backtest(session, trades: list[Trade], start_date: date, end_date: dat
             pnl_points=t.pnl_points, ce_strike=t.ce_strike, pe_strike=t.pe_strike,
             source="backtest",
         ))
-    n = len(trades)
-    wins = sum(1 for t in trades if t.pnl_points > 0)
+    n = len(resolved)
+    wins = sum(1 for t in resolved if t.pnl_points > 0)
     run = GoldenMasterBacktestRun(
         start_date=start_date, end_date=end_date, n_trades=n, n_wins=wins,
         win_rate=(wins / n if n else 0.0),
-        net_points=sum(t.pnl_points for t in trades),
-        rejection_trades=sum(1 for t in trades if t.signal_type == "REJECTION"),
-        blue_breakout_trades=sum(1 for t in trades if t.signal_type == "BLUE_BREAKOUT"),
+        net_points=sum(t.pnl_points for t in resolved),
+        rejection_trades=sum(1 for t in resolved if t.signal_type == "REJECTION"),
+        blue_breakout_trades=sum(1 for t in resolved if t.signal_type == "BLUE_BREAKOUT"),
     )
     session.add(run)
     log.info("Backtest: %d trades, win_rate=%.1f%%, net=%.1f points",

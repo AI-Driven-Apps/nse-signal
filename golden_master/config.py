@@ -1,6 +1,6 @@
 """Golden Master config. Deliberately separate from app/config.py — this is
-an isolated subsystem with its own DB and (currently) no live data feed.
-See docs/golden_master_spec.md."""
+an isolated subsystem with its own DB and its own yfinance-based intraday
+feed (see intraday_provider.py). See docs/golden_master_spec.md."""
 import os
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////data/golden_master.db")
