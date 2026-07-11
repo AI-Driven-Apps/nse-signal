@@ -6,11 +6,34 @@ services:
     env_file: .env
     environment:
       - TZ=Asia/Kolkata
+      # read-only, for the dashboard's Golden Master page only — this
+      # container never writes to golden_master.db
+      - GOLDEN_MASTER_DATABASE_URL=sqlite:////data-golden-master/golden_master.db
     volumes:
-      - ./data:/data          # SQLite DB persists here — back this folder up
+      - ./data:/data                          # SQLite DB persists here — back this folder up
+      - ./data-golden-master:/data-golden-master:ro
     ports:
       - "8000:8000"           # dashboard — LAN only, do not forward on your router
     mem_limit: 512m           # keep the Pi responsive for your YT pipeline
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  golden-master:
+    build:
+      context: ./golden_master
+    container_name: golden-master
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Kolkata
+      - DATABASE_URL=sqlite:////data/golden_master.db
+      # Same webhook as nse-signal, distinct embed styling (see golden_master/notify.py)
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+    volumes:
+      - ./data-golden-master:/data   # own DB, own volume — isolated from nse_signal.db
+    mem_limit: 256m
     logging:
       driver: json-file
       options:

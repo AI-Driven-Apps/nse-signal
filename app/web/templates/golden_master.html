@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Golden Master — NSE-Signal{% endblock %}
+{% block content %}
+<h1>Golden Master</h1>
+<p class="muted">
+  Intraday Nifty options (CE/PE) strategy &mdash; a separate, dedicated subsystem
+  (own container, own database). P/L below is in Nifty index points, not real
+  option premium: no options-chain/Greeks data source is modeled, so a real
+  trade's P&amp;L would differ due to premium/theta/IV effects. No live data
+  source is wired up yet &mdash; results below come from backtests you run
+  manually against a CSV of historical bars. See docs/golden_master_spec.md.
+</p>
+
+{% if not summary %}
+<p class="muted">No backtest results yet.</p>
+{% else %}
+<div class="cards">
+  <div class="card">
+    <div class="label">Win rate</div>
+    <div class="value">{{ "%.0f"|format(summary.win_rate * 100) }}%</div>
+  </div>
+  <div class="card">
+    <div class="label">Net points</div>
+    <div class="value {{ 'pos' if summary.net_points >= 0 else 'neg' }}">
+      {{ "%.1f"|format(summary.net_points) }}
+    </div>
+  </div>
+  <div class="card">
+    <div class="label">Trades</div>
+    <div class="value">{{ summary.n_trades }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Rejection / Blue-breakout</div>
+    <div class="value">{{ summary.rejection_trades }} / {{ summary.blue_breakout_trades }}</div>
+  </div>
+</div>
+<p class="muted">Backtest range: {{ summary.start_date }} to {{ summary.end_date }}</p>
+{% endif %}
+
+<h3>Recent trades</h3>
+{% if trades %}
+<table>
+  <tr>
+    <th>Date</th><th>Type</th><th>Dir</th><th>Entry</th><th>SL</th><th>Target</th>
+    <th>Exit</th><th>Reason</th><th>P/L (pts)</th><th>CE</th><th>PE</th>
+  </tr>
+  {% for t in trades %}
+  <tr>
+    <td>{{ t.trade_date }}</td>
+    <td>{{ t.signal_type }}</td>
+    <td class="{{ 'pos' if t.direction == 'BUY' else 'neg' }}">{{ t.direction }}</td>
+    <td>{{ "%.2f"|format(t.entry_price) }}</td>
+    <td>{{ "%.2f"|format(t.sl_price) }}</td>
+    <td>{{ "%.2f"|format(t.target_price) }}</td>
+    <td>{{ "%.2f"|format(t.exit_price) if t.exit_price is not none else '—' }}</td>
+    <td>{{ t.exit_reason or '—' }}</td>
+    <td class="{{ 'pos' if t.pnl_points and t.pnl_points >= 0 else 'neg' }}">
+      {{ "%.1f"|format(t.pnl_points) if t.pnl_points is not none else '—' }}
+    </td>
+    <td>{{ "%.0f"|format(t.ce_strike) if t.ce_strike is not none else '—' }}</td>
+    <td>{{ "%.0f"|format(t.pe_strike) if t.pe_strike is not none else '—' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No trades yet.</p>
+{% endif %}
+{% endblock %}

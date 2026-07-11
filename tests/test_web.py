@@ -28,14 +28,14 @@ def test_unauthenticated_redirects_to_login(db):
 
 def test_new_pages_require_auth(db):
     client = TestClient(app, follow_redirects=False)
-    for path in ["/stats", "/strategy", "/watchlist", "/signals"]:
+    for path in ["/stats", "/strategy", "/watchlist", "/signals", "/golden-master"]:
         r = client.get(path)
         assert r.status_code == 302 and r.headers["location"] == "/login", path
 
 
 def test_new_pages_render_when_authed(db):
     client = _authed_client()
-    for path in ["/stats", "/strategy", "/watchlist", "/signals"]:
+    for path in ["/stats", "/strategy", "/watchlist", "/signals", "/golden-master"]:
         r = client.get(path)
         assert r.status_code == 200, path
 

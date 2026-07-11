@@ -25,6 +25,7 @@ from .data import (
     strategy_metrics, suggested_stocks, toggle_star, top_movers,
     watchlist_rows,
 )
+from .golden_master_data import latest_backtest_summary, recent_trades as gm_recent_trades
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -203,6 +204,14 @@ def create_app() -> FastAPI:
                 sig.sent_to_discord = send_signal(
                     stock.symbol, sig.action, sig.price, sig.strategy, sig.date)
         return RedirectResponse(url="/signals", status_code=302)
+
+    @app.get("/golden-master")
+    def golden_master_page(request: Request, user: User = Depends(get_current_user)):
+        summary = latest_backtest_summary()
+        trades = gm_recent_trades()
+        return templates.TemplateResponse(request, "golden_master.html", {
+            "user": user, "summary": summary, "trades": trades,
+        })
 
     return app
 

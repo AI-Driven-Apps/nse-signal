@@ -46,4 +46,9 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 COOKIE_MAX_AGE_DAYS = int(os.getenv("COOKIE_MAX_AGE_DAYS", "7"))
 WEB_PORT = int(os.getenv("WEB_PORT", "8000"))
 
+# ---- Golden Master (separate subsystem/container) — read-only display ----
+# Empty if not configured; the /golden-master page shows a "not configured"
+# state rather than erroring. See docs/golden_master_spec.md.
+GOLDEN_MASTER_DATABASE_URL = os.getenv("GOLDEN_MASTER_DATABASE_URL", "")
+
 TZ = os.getenv("TZ", "Asia/Kolkata")

@@ -28,6 +28,10 @@ app/
   main.py            CLI (init-db | ingest | signals | backtest | set-strategy | run)
   strategies/        base.Strategy ABC, sma_cross, rsi_reversion, registry
 docker-compose.yml   ./data volume, mem_limit 512m, TZ Asia/Kolkata
+
+golden_master/       separate subsystem, own container/DB/backtester — an
+                      intraday Nifty options strategy, deliberately outside
+                      invariant 5 below. See docs/golden_master_spec.md.
 ```
 
 Scheduler (IST): ingest + signals Mon–Fri 18:30; universe backtest Sun 10:00.
@@ -44,7 +48,11 @@ Scheduler (IST): ingest + signals Mon–Fri 18:30; universe backtest Sun 10:00.
    remain a `DATABASE_URL` change plus Alembic migrations.
 4. **Market data goes through `DataProvider`.** yfinance is unofficial and
    breaks; never call `yfinance` outside `data_provider.py`.
-5. **NSE cash market, long-only.** No shorting, no F&O, no intraday.
+5. **NSE cash market, long-only.** No shorting, no F&O, no intraday. This
+   applies to `app/` — the cash-equity engine — only. `golden_master/` is a
+   deliberate, isolated exception (its own container, own DB, own
+   backtester, no shared code with `app/`): an intraday Nifty options
+   strategy, confirmed with the project owner. See docs/golden_master_spec.md.
 6. **Idempotent jobs.** Ingest and signal runs must be safe to re-run
    (dedup exists — preserve it).
 7. **Pi budget.** Single container, 512 MB cap, ARM64. No Node build step,

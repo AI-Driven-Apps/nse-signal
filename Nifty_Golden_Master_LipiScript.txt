@@ -1,0 +1,154 @@
+// Nifty 50 - Golden Master Strategy (Lipi Script draft port)
+// Ported from the TradingView Pine Script v5 version of this strategy.
+// Original logic based on strategy document dated 13-06-2026.
+//
+// IMPORTANT: This is a FIRST-DRAFT port. Lipi Script is NOT Pine-compatible
+// syntax-wise (see GoCharting's own Lipi Genesis docs). Please open this in
+// the Lipi Editor and fix any compile errors it flags -- particularly:
+//   1. The exact request.security()-equivalent call signature for pulling
+//      15-min Heikin Ashi data onto this chart.
+//   2. Whether line.new()/label.new() are available on your plan (if not,
+//      the plot()-based fallback for yellow/blue lines below will still work).
+//   3. talib.* function names/arg order (verify against autocomplete).
+//
+// ASSUMPTIONS (same as the TradingView version):
+// 1. "Touching" a line = candle's high/low (wick) touches or crosses it.
+// 2. SL = 25 points, Target = 25 points, fixed, both setups.
+// 3. Blue-line breakout candle must also not touch the blue line it crosses.
+// 4. Only ONE signal per direction per day (Rejection + Blue-Line combined).
+
+indicator("Nifty Golden Master Strategy", overlay = true)
+
+// ---------------- INPUTS ----------------
+float slPoints  = input(25.0, "Stop Loss (points)")
+float tgtPoints = input(25.0, "Target (points)")
+int rejStartHr  = input(9, "Rejection search start hour")
+int rejStartMin = input(30, "Rejection search start minute")
+int fallbackHr  = input(9, "Fallback trigger hour")
+int fallbackMin = input(45, "Fallback trigger minute")
+
+// ---------------- TIME HELPERS ----------------
+int curHr  = hour(time)
+int curMin = minute(time)
+bool afterRejStart  = (curHr > rejStartHr) or (curHr == rejStartHr and curMin >= rejStartMin)
+bool afterFallback  = (curHr > fallbackHr) or (curHr == fallbackHr and curMin >= fallbackMin)
+bool newDay = change(dayofmonth(time)) != 0
+
+// ---------------- 1. STRIKE SELECTION ----------------
+static float dayOpen  = na
+static float ceStrike = na
+static float peStrike = na
+
+if newDay {
+    dayOpen = open
+    float roundedOpen = round(dayOpen / 100) * 100
+    ceStrike = roundedOpen - 100
+    peStrike = roundedOpen + 100
+}
+
+plot(ceStrike, "CE Strike", color = color.new(color.blue, 0.0))
+plot(peStrike, "PE Strike", color = color.new(color.red, 0.0))
+
+// ---------------- 2. YELLOW LINES (15-min Heikin Ashi) ----------------
+// NOTE: verify this multi-timeframe + Heikin Ashi request call in the editor.
+// Placeholder pattern based on Lipi's request.security-equivalent + ticker/HA access:
+[haClose15, haOpen15] = request.security(syminfo.tickerid, "15", [close, open], heikinashi = true)
+
+int haHr  = hour(time("15"))
+int haMin = minute(time("15"))
+
+static float yellow1 = na  // previous day's 3:15 PM HA close
+static float yellow2 = na  // current day's 9:15 AM HA close
+
+if haHr == 15 and haMin == 15 {
+    yellow1 = haClose15
+}
+if haHr == 9 and haMin == 15 {
+    yellow2 = haClose15
+}
+
+plot(yellow1, "Yellow Line 1 (Prev Day 3:15PM HA)", color = color.new(color.yellow, 0.0))
+plot(yellow2, "Yellow Line 2 (Today 9:15AM HA)", color = color.new(color.yellow, 0.0))
+
+// ---------------- 3 & 4. BLUE LINES (fallback) ----------------
+static float blue1 = na  // 9:30 AM HA close
+static float blue2 = na  // 9:45 AM HA open
+
+if haHr == 9 and haMin == 30 {
+    blue1 = haClose15
+}
+if haHr == 9 and haMin == 45 {
+    blue2 = haOpen15
+}
+
+plot(blue1, "Blue Line 1 (9:30 HA Close)", color = color.new(color.blue, 0.0))
+plot(blue2, "Blue Line 2 (9:45 HA Open)", color = color.new(color.blue, 0.0))
+
+// ---------------- DAILY STATE ----------------
+static bool buyDone        = false
+static bool sellDone       = false
+static bool rejectionFound = false
+
+if newDay {
+    buyDone = false
+    sellDone = false
+    rejectionFound = false
+}
+
+bool yellowsReady = not na(yellow1) and not na(yellow2)
+float upperYellow = max(yellow1, yellow2)
+float lowerYellow = min(yellow1, yellow2)
+
+bool bullishNoTouch = low > upperYellow
+bool bearishNoTouch = high < lowerYellow
+bool isBullishCandle = close > open
+bool isBearishCandle = close < open
+
+// ---------------- REJECTION CANDLE ----------------
+bool bullRejection = afterRejStart and yellowsReady and not buyDone and not rejectionFound and
+     close > upperYellow and bullishNoTouch and isBullishCandle
+
+bool bearRejection = afterRejStart and yellowsReady and not sellDone and not rejectionFound and
+     close < lowerYellow and bearishNoTouch and isBearishCandle
+
+if bullRejection {
+    float entryPrice = high
+    buyDone = true
+    rejectionFound = true
+    alert("BUY REJECTION entry=" + tostring(entryPrice) + " sl=" + tostring(slPoints) + " tgt=" + tostring(tgtPoints))
+}
+
+if bearRejection {
+    float entryPrice = low
+    sellDone = true
+    rejectionFound = true
+    alert("SELL REJECTION entry=" + tostring(entryPrice) + " sl=" + tostring(slPoints) + " tgt=" + tostring(tgtPoints))
+}
+
+// ---------------- BLUE LINE FALLBACK ----------------
+bool blueReady = not na(blue1) and not na(blue2)
+float upperBlue = max(blue1, blue2)
+float lowerBlue = min(blue1, blue2)
+bool fallbackActive = afterFallback and blueReady and not rejectionFound
+
+bool bullBreakoutNoTouch = low > upperBlue
+bool bearBreakoutNoTouch = high < lowerBlue
+
+bool bullBlueBreak = fallbackActive and not buyDone and crossover(close, upperBlue) and bullBreakoutNoTouch
+bool bearBlueBreak = fallbackActive and not sellDone and crossunder(close, lowerBlue) and bearBreakoutNoTouch
+
+if bullBlueBreak {
+    float entryPrice = upperBlue + 3
+    buyDone = true
+    alert("BUY BLUE_BREAKOUT entry=" + tostring(entryPrice) + " sl=" + tostring(slPoints) + " tgt=" + tostring(tgtPoints))
+}
+
+if bearBlueBreak {
+    float entryPrice = lowerBlue - 3
+    sellDone = true
+    alert("SELL BLUE_BREAKOUT entry=" + tostring(entryPrice) + " sl=" + tostring(slPoints) + " tgt=" + tostring(tgtPoints))
+}
+
+// ---------------- VISUAL MARKERS ----------------
+plotshape(bullRejection or bullBlueBreak, "Buy Signal", style = shape.triangleup, location = location.belowbar, color = color.green)
+plotshape(bearRejection or bearBlueBreak, "Sell Signal", style = shape.triangledown, location = location.abovebar, color = color.red)
