@@ -25,7 +25,9 @@ from .data import (
     strategy_metrics, suggested_stocks, toggle_star, top_movers,
     watchlist_rows,
 )
-from .golden_master_data import latest_backtest_summary, recent_trades as gm_recent_trades
+from .golden_master_data import (
+    latest_backtest_summary, latest_daily_levels, recent_trades as gm_recent_trades,
+)
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -209,8 +211,9 @@ def create_app() -> FastAPI:
     def golden_master_page(request: Request, user: User = Depends(get_current_user)):
         summary = latest_backtest_summary()
         trades = gm_recent_trades()
+        levels = latest_daily_levels()
         return templates.TemplateResponse(request, "golden_master.html", {
-            "user": user, "summary": summary, "trades": trades,
+            "user": user, "summary": summary, "trades": trades, "levels": levels,
         })
 
     return app

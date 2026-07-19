@@ -1,6 +1,6 @@
 """Backtest simulator. The existing app/backtest.py's vectorized approach
 doesn't apply here (one-shot bracket trades, not a continuous position
-series) — this replays 15-min bars through SignalEngine and, for each fired
+series) — this replays 5-min bars through SignalEngine and, for each fired
 signal, scans forward for the first bar touching SL or target.
 
 Also reused for live trading (golden_master/live.py): the same replay,
@@ -10,6 +10,14 @@ None) rather than squared off — since for live polling that last day is
 "now", not a finished trading day. live.py re-runs this on every poll as
 more bars arrive and upserts the result, so the same tested resolution
 logic (including the SL-wins-ties rule) drives both paths.
+
+Dual timeframe (2026-07-11 spec-alignment rework, see docs/golden_master_spec.md):
+input is 5-min OHLC only. The 15-min Heikin-Ashi reference-line series is
+derived in-memory (heikin_ashi.resample_to_15m + to_heikin_ashi) and fed to
+SignalEngine.update_levels() in lockstep with the 5-min bars going to
+process_bar() — level bars for a given instant are always applied before a
+detection bar at that same instant, so e.g. the 9:30 level (blue1) is
+visible to a 9:30 detection bar in the same pass.
 
 Resolution rules (see docs/golden_master_spec.md):
 - A single bar touching both SL and target resolves to SL_HIT (conservative,
@@ -28,9 +36,9 @@ from datetime import date, datetime
 import pandas as pd
 
 from .config import SL_POINTS, STRIKE_OFFSET, TARGET_POINTS
-from .engine import HABar, SignalEngine
-from .heikin_ashi import to_heikin_ashi
-from .models import GoldenMasterBacktestRun, GoldenMasterTrade
+from .engine import EntryBar, HABar, SignalEngine
+from .heikin_ashi import resample_to_15m, to_heikin_ashi
+from .models import GoldenMasterBacktestRun, GoldenMasterDailyLevels, GoldenMasterTrade
 
 log = logging.getLogger("golden_master.backtest")
 
@@ -60,33 +68,55 @@ def _as_date(ts) -> date:
     return _as_datetime(ts).date()
 
 
-def backtest_range(df: pd.DataFrame, treat_last_day_as_incomplete: bool = False) -> list[Trade]:
-    """df: ascending-time 15-min OHLC bars (open/high/low/close columns),
+def _derive_levels(df_5m: pd.DataFrame) -> list[tuple]:
+    """15-min HA bars derived from the 5-min input, as a plain row list for
+    the lockstep advance in backtest_range/compute_daily_levels."""
+    df_15m = resample_to_15m(df_5m)
+    ha_15m = to_heikin_ashi(df_15m)
+    return list(ha_15m.iterrows())
+
+
+def _advance_levels(engine: SignalEngine, level_rows: list, level_idx: int, upto_ts: datetime) -> int:
+    """Feed engine.update_levels() every level bar at-or-before upto_ts.
+    Returns the new level_idx (so the caller resumes from where this left off)."""
+    while level_idx < len(level_rows) and _as_datetime(level_rows[level_idx][0]) <= upto_ts:
+        lts, lrow = level_rows[level_idx]
+        engine.update_levels(HABar(_as_datetime(lts), lrow["ha_open"], lrow["ha_high"],
+                                   lrow["ha_low"], lrow["ha_close"]))
+        level_idx += 1
+    return level_idx
+
+
+def backtest_range(df_5m: pd.DataFrame, treat_last_day_as_incomplete: bool = False) -> list[Trade]:
+    """df_5m: ascending-time 5-min OHLC bars (open/high/low/close columns),
     one or more trading days. Precondition: each day's first row is that
     day's session open (used for CE/PE strike selection).
 
     treat_last_day_as_incomplete: if True, a signal on the LAST calendar day
-    present in df that hasn't hit SL/target within df's own bars is left
-    open (exit_* = None) instead of EOD-squared-off — for live polling,
+    present in df_5m that hasn't hit SL/target within df_5m's own bars is
+    left open (exit_* = None) instead of EOD-squared-off — for live polling,
     where the last day is still in progress. Earlier days always resolve
     normally regardless of this flag."""
-    ha = to_heikin_ashi(df)
     engine = SignalEngine()
     trades: list[Trade] = []
     strikes_by_day: dict[date, tuple[float, float]] = {}
+    level_rows = _derive_levels(df_5m)
+    level_idx = 0
 
-    rows = list(ha.iterrows())
+    rows = list(df_5m.iterrows())
     last_date = _as_date(rows[-1][0]) if rows else None
 
     for i, (ts, row) in enumerate(rows):
+        ts_dt = _as_datetime(ts)
         d = _as_date(ts)
         if d not in strikes_by_day:
             rounded = round(row["open"] / STRIKE_OFFSET) * STRIKE_OFFSET
             strikes_by_day[d] = (rounded - STRIKE_OFFSET, rounded + STRIKE_OFFSET)
         ce_strike, pe_strike = strikes_by_day[d]
 
-        bar = HABar(_as_datetime(ts), row["ha_open"], row["ha_high"],
-                    row["ha_low"], row["ha_close"])
+        level_idx = _advance_levels(engine, level_rows, level_idx, ts_dt)
+
+        bar = EntryBar(ts_dt, row["open"], row["high"], row["low"], row["close"])
         signal = engine.process_bar(bar)
         if signal is None:
             continue
@@ -144,6 +174,33 @@ def backtest_range(df: pd.DataFrame, treat_last_day_as_incomplete: bool = False)
     return trades
 
 
+def compute_daily_levels(df_5m: pd.DataFrame) -> dict[date, dict]:
+    """Snapshot each trading day's yellow/blue levels + CE/PE strikes as of
+    the last bar processed that day, independent of whether a trade fired —
+    feeds the dashboard's daily-levels display (§ written requirement's
+    "chart requirements": show lines + strikes with labels)."""
+    engine = SignalEngine()  # only update_levels() is used here
+    level_rows = _derive_levels(df_5m)
+    level_idx = 0
+    strikes_by_day: dict[date, tuple[float, float]] = {}
+    out: dict[date, dict] = {}
+
+    for ts, row in df_5m.iterrows():
+        ts_dt = _as_datetime(ts)
+        d = _as_date(ts)
+        if d not in strikes_by_day:
+            rounded = round(row["open"] / STRIKE_OFFSET) * STRIKE_OFFSET
+            strikes_by_day[d] = (rounded - STRIKE_OFFSET, rounded + STRIKE_OFFSET)
+        level_idx = _advance_levels(engine, level_rows, level_idx, ts_dt)
+        ce_strike, pe_strike = strikes_by_day[d]
+        out[d] = {
+            "yellow1": engine.yellow1, "yellow2": engine.yellow2,
+            "blue1": engine.blue1, "blue2": engine.blue2,
+            "ce_strike": ce_strike, "pe_strike": pe_strike,
+        }
+    return out
+
+
 def store_backtest(session, trades: list[Trade], start_date: date, end_date: date) -> GoldenMasterBacktestRun:
     """Persist trades + one aggregate run row. Fixed 1:1 SL:target means win
     rate alone determines edge before costs — it's the headline metric.
@@ -173,3 +230,18 @@ def store_backtest(session, trades: list[Trade], start_date: date, end_date: dat
     log.info("Backtest: %d trades, win_rate=%.1f%%, net=%.1f points",
              n, run.win_rate * 100, run.net_points)
     return run
+
+
+def store_daily_levels(session, daily_levels: dict[date, dict]) -> None:
+    """Upsert one row per day from compute_daily_levels()'s output."""
+    for d, levels in daily_levels.items():
+        row = session.get(GoldenMasterDailyLevels, d)
+        if row is None:
+            row = GoldenMasterDailyLevels(trading_date=d)
+            session.add(row)
+        row.yellow1 = levels.get("yellow1")
+        row.yellow2 = levels.get("yellow2")
+        row.blue1 = levels.get("blue1")
+        row.blue2 = levels.get("blue2")
+        row.ce_strike = levels.get("ce_strike")
+        row.pe_strike = levels.get("pe_strike")

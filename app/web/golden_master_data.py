@@ -53,3 +53,23 @@ def latest_backtest_summary() -> dict | None:
             select(runs).order_by(runs.c.created_at.desc()).limit(1)
         ).mappings().first()
     return dict(row) if row else None
+
+
+def latest_daily_levels() -> dict | None:
+    """Most recent day's yellow/blue reference lines + CE/PE strikes —
+    written independent of whether a trade fired that day (see
+    GoldenMasterDailyLevels). Reflected separately from available()'s two
+    tables so an older golden-master deployment that hasn't created this
+    table yet degrades to "no data" here rather than breaking the page."""
+    if _engine is None:
+        return None
+    try:
+        metadata = MetaData()
+        levels = Table("golden_master_daily_levels", metadata, autoload_with=_engine)
+    except Exception:
+        return None
+    with _SessionLocal() as s:
+        row = s.execute(
+            select(levels).order_by(levels.c.trading_date.desc()).limit(1)
+        ).mappings().first()
+    return dict(row) if row else None

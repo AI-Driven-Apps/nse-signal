@@ -14,7 +14,7 @@ os.environ["DISCORD_WEBHOOK_URL"] = ""
 import pytest
 
 from golden_master.db import engine, init_db
-from golden_master.engine import HABar
+from golden_master.engine import EntryBar, HABar
 from golden_master.models import Base
 
 
@@ -27,7 +27,15 @@ def db():
 
 
 def ha_bar(d: date, hour: int, minute: int, o: float, h: float, l: float, c: float) -> HABar:
-    """Build an HABar with hand-chosen HA values directly — engine.py tests
-    drive the state machine independently of heikin_ashi.py's transform
-    (that's covered separately in test_heikin_ashi.py)."""
+    """Build an HABar (15-min level-setting input, fed via
+    SignalEngine.update_levels) with hand-chosen HA values directly —
+    engine.py tests drive the state machine independently of
+    heikin_ashi.py's transform (that's covered separately in
+    test_heikin_ashi.py)."""
     return HABar(datetime.combine(d, time(hour, minute)), o, h, l, c)
+
+
+def entry_bar(d: date, hour: int, minute: int, o: float, h: float, l: float, c: float) -> EntryBar:
+    """Build an EntryBar (5-min raw detection input, fed via
+    SignalEngine.process_bar)."""
+    return EntryBar(datetime.combine(d, time(hour, minute)), o, h, l, c)

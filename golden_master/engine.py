@@ -1,25 +1,40 @@
-"""Signal-detection state machine, ported from Nifty_Golden_Master_LipiScript.txt.
+"""Signal-detection state machine, ported from Nifty_Golden_Master_LipiScript.txt
+and aligned to the project owner's formal written requirement doc
+(2026-07-11 spec-alignment rework — see docs/golden_master_spec.md).
 
-Porting decision (documented since the source is an admitted first draft):
-the script pulls 15-min Heikin-Ashi data explicitly for its reference lines
-via request.security(..., heikinashi=true), but its rejection/breakout
-*detection* conditions use bare open/high/low/close with no HA qualifier —
-ambiguous whether that means the chart's own (possibly non-HA) candles or
-the same HA series. Given the strategy is titled and documented entirely
-around Heikin-Ashi, this port treats detection as HA-based throughout too,
-for internal consistency. Revisit here first if live behavior needs to
-differ from this.
+Two input streams, two entry points:
+- update_levels(HABar) — 15-min Heikin-Ashi bars (derived from 5-min data via
+  heikin_ashi.resample_to_15m + to_heikin_ashi, not ingested directly). Only
+  ever updates yellow1/yellow2/blue1/blue2 at their fixed times-of-day; never
+  returns a signal.
+- process_bar(EntryBar) — 5-min *normal* (non-HA) candles. This is where
+  rejection/breakout detection, entry pricing, and the daily done-flags
+  actually live.
+Callers (backtest.py, live.py) must feed update_levels() for a given
+timestamp before process_bar() for that same or a later timestamp, so a
+level a bar-of-that-instant sets is visible to detection happening at the
+same instant (relevant right at 9:30 and 9:45).
 
 Fidelity notes (see docs/golden_master_spec.md for the full list):
 - yellow1/yellow2/blue1/blue2 persist across day boundaries, updated only
   when a bar at their specific time-of-day arrives — NOT reset daily.
-- Only buy_done/sell_done/rejection_found reset at day start.
+- Only buy_done/sell_done/rejection_found reset at day start. Day-boundary
+  detection is checked from BOTH entry points (whichever stream's bar
+  arrives first for a new day triggers the reset), so it can't be skipped
+  by stream interleaving order.
 - rejection_found is set by a rejection in EITHER direction and blocks
   every further rejection AND the blue-line fallback for the rest of the
   day. Blue-line fallback does not set rejection_found, and buy_done/
   sell_done gate independently, so a day with no rejection can still fire
   both a bull and a bear blue-breakout (a whipsaw day) — this is
   intentional, not a bug.
+- Rejection search is a HARD WINDOW: [rejection_start, fallback_start), i.e.
+  9:30-9:45 by default. A rejection cannot fire before 9:30 OR at/after
+  9:45, even with an otherwise perfect setup and even if rejection_found is
+  still False — once 9:45 arrives with no rejection, blue-line is the only
+  mechanism for the rest of the day, permanently. (This is a change from
+  the original Lipi script port, which allowed rejection any time after
+  9:30 — the owner's formal spec is explicit about the 9:45 cutoff.)
 """
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,11 +47,22 @@ from .config import (
 
 @dataclass(frozen=True)
 class HABar:
+    """A 15-min Heikin-Ashi bar — reference-line input only (update_levels)."""
     timestamp: datetime
     ha_open: float
     ha_high: float
     ha_low: float
     ha_close: float
+
+
+@dataclass(frozen=True)
+class EntryBar:
+    """A 5-min normal (non-HA) candle — detection input only (process_bar)."""
+    timestamp: datetime
+    open: float
+    high: float
+    low: float
+    close: float
 
 
 @dataclass(frozen=True)
@@ -48,7 +74,8 @@ class Signal:
 
 
 class SignalEngine:
-    """Feed 15-min Heikin-Ashi bars in ascending time order via process_bar().
+    """Feed 15-min HA bars via update_levels() and 5-min normal candles via
+    process_bar(), both in ascending time order (interleaved as they occur).
     Stateful across bars/days by design (mirrors the source script's static
     variables) — create a fresh instance per independent backtest run."""
 
@@ -70,14 +97,18 @@ class SignalEngine:
         self.rejection_found = False
         self._prev_close: float | None = None
 
-    def process_bar(self, bar: HABar) -> Signal | None:
-        d = bar.timestamp.date()
+    def _maybe_reset_for_new_day(self, d) -> None:
         if self._current_date != d:
             self._current_date = d
             self.buy_done = False
             self.sell_done = False
             self.rejection_found = False
+            self._prev_close = None
 
+    def update_levels(self, bar: HABar) -> None:
+        """15-min HA bar: update yellow/blue reference lines at their fixed
+        times-of-day. Never returns a signal, never touches done-flags."""
+        self._maybe_reset_for_new_day(bar.timestamp.date())
         hm = (bar.timestamp.hour, bar.timestamp.minute)
 
         if hm == (15, 15):
@@ -89,43 +120,48 @@ class SignalEngine:
         if hm == (9, 45):
             self.blue2 = bar.ha_open
 
+    def process_bar(self, bar: EntryBar) -> Signal | None:
+        """5-min normal candle: rejection/breakout detection, raw OHLC."""
+        self._maybe_reset_for_new_day(bar.timestamp.date())
+        hm = (bar.timestamp.hour, bar.timestamp.minute)
+
         signal = self._check_rejection(bar, hm)
         if signal is None:
             signal = self._check_blue_breakout(bar, hm)
 
-        self._prev_close = bar.ha_close
+        self._prev_close = bar.close
         return signal
 
-    def _check_rejection(self, bar: HABar, hm: tuple[int, int]) -> Signal | None:
+    def _check_rejection(self, bar: EntryBar, hm: tuple[int, int]) -> Signal | None:
         if self.yellow1 is None or self.yellow2 is None:
             return None
-        if hm < self.rejection_start:
-            return None
+        if hm < self.rejection_start or hm >= self.fallback_start:
+            return None  # hard window: [rejection_start, fallback_start) only
 
         upper_yellow = max(self.yellow1, self.yellow2)
         lower_yellow = min(self.yellow1, self.yellow2)
-        is_bull_candle = bar.ha_close > bar.ha_open
-        is_bear_candle = bar.ha_close < bar.ha_open
+        is_bull_candle = bar.close > bar.open
+        is_bear_candle = bar.close < bar.open
 
         bull_rejection = (not self.buy_done and not self.rejection_found and
-                          bar.ha_close > upper_yellow and bar.ha_low > upper_yellow and
+                          bar.close > upper_yellow and bar.low > upper_yellow and
                           is_bull_candle)
         if bull_rejection:
             self.buy_done = True
             self.rejection_found = True
-            return Signal("REJECTION", "BUY", bar.timestamp, bar.ha_high)
+            return Signal("REJECTION", "BUY", bar.timestamp, bar.high)
 
         bear_rejection = (not self.sell_done and not self.rejection_found and
-                          bar.ha_close < lower_yellow and bar.ha_high < lower_yellow and
+                          bar.close < lower_yellow and bar.high < lower_yellow and
                           is_bear_candle)
         if bear_rejection:
             self.sell_done = True
             self.rejection_found = True
-            return Signal("REJECTION", "SELL", bar.timestamp, bar.ha_low)
+            return Signal("REJECTION", "SELL", bar.timestamp, bar.low)
 
         return None
 
-    def _check_blue_breakout(self, bar: HABar, hm: tuple[int, int]) -> Signal | None:
+    def _check_blue_breakout(self, bar: EntryBar, hm: tuple[int, int]) -> Signal | None:
         if self.blue1 is None or self.blue2 is None:
             return None
         if hm < self.fallback_start or self.rejection_found:
@@ -136,15 +172,15 @@ class SignalEngine:
         upper_blue = max(self.blue1, self.blue2)
         lower_blue = min(self.blue1, self.blue2)
 
-        bull_cross = self._prev_close <= upper_blue and bar.ha_close > upper_blue
-        bull_no_touch = bar.ha_low > upper_blue
+        bull_cross = self._prev_close <= upper_blue and bar.close > upper_blue
+        bull_no_touch = bar.low > upper_blue
         if not self.buy_done and bull_cross and bull_no_touch:
             self.buy_done = True
             return Signal("BLUE_BREAKOUT", "BUY", bar.timestamp,
                          upper_blue + self.blue_breakout_buffer)
 
-        bear_cross = self._prev_close >= lower_blue and bar.ha_close < lower_blue
-        bear_no_touch = bar.ha_high < lower_blue
+        bear_cross = self._prev_close >= lower_blue and bar.close < lower_blue
+        bear_no_touch = bar.high < lower_blue
         if not self.sell_done and bear_cross and bear_no_touch:
             self.sell_done = True
             return Signal("BLUE_BREAKOUT", "SELL", bar.timestamp,

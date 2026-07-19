@@ -1,60 +1,53 @@
-"""Intraday ingestion: fetch recent 15-min bars, compute Heikin-Ashi, upsert
-into intraday_bars. Mirrors app/ingest.py's full-refetch-and-upsert pattern
-(same reasoning: re-fetch a wide window and upsert rather than append-only,
-so any provider-side revision is picked up; cheap at 15-min/1-symbol scale).
+"""Intraday ingestion: fetch recent 5-min bars, upsert into five_min_bars.
+Mirrors app/ingest.py's full-refetch-and-upsert pattern (re-fetch a wide
+window and upsert rather than append-only, so any provider-side revision is
+picked up; cheap at 5-min/1-symbol scale).
 
-Heikin-Ashi is a recursive, continuous transform (see heikin_ashi.py) — its
-"seed" bar is always the first bar of whatever window got fetched. Fetching
-a full month (not just the last few days) each time keeps that seed well
-before the bars that actually matter for live trading, so its influence has
-decayed to negligible by the time it reaches today's data (each step halves
-the seed's weight). A short fetch window right before "today" would put the
-seed too close to the bars we care about."""
+As of the 2026-07-11 spec-alignment rework (see docs/golden_master_spec.md),
+this is the ONLY ingested intraday feed — the 15-min Heikin-Ashi
+reference-line series used to be ingested and stored directly (the now-
+vestigial IntradayBar table), but is derived in-memory from these 5-min
+bars instead (heikin_ashi.resample_to_15m + to_heikin_ashi), computed fresh
+at replay time rather than persisted. No HA-seed-decay concern here (unlike
+the old design) since nothing recursive is being stored — a short default
+fetch period is fine."""
 import logging
 
 from sqlalchemy import select
 
 from .config import SYMBOL
-from .heikin_ashi import to_heikin_ashi
 from .intraday_provider import get_provider
-from .models import IntradayBar
+from .models import FiveMinBar
 
 log = logging.getLogger("golden_master.ingest")
 
 
-def ingest_symbol(session, provider, symbol: str, period: str = "1mo") -> int:
-    df = provider.fetch(symbol, period=period, interval="15m")
+def ingest_symbol(session, provider, symbol: str, period: str = "5d") -> int:
+    df = provider.fetch(symbol, period=period, interval="5m")
     if df.empty:
         return 0
-    ha = to_heikin_ashi(df)
 
     existing = {
         bar.timestamp: bar
         for bar in session.execute(
-            select(IntradayBar).where(IntradayBar.symbol == symbol)
+            select(FiveMinBar).where(FiveMinBar.symbol == symbol)
         ).scalars()
     }
     changed = 0
-    for ts, row in ha.iterrows():
+    for ts, row in df.iterrows():
         ts = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
         o, h, l, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
-        hao, hah, hal, hac = (float(row["ha_open"]), float(row["ha_high"]),
-                              float(row["ha_low"]), float(row["ha_close"]))
         bar = existing.get(ts)
         if bar is None:
-            session.add(IntradayBar(
-                symbol=symbol, timestamp=ts, open=o, high=h, low=l, close=c,
-                ha_open=hao, ha_high=hah, ha_low=hal, ha_close=hac,
-            ))
+            session.add(FiveMinBar(symbol=symbol, timestamp=ts, open=o, high=h, low=l, close=c))
             changed += 1
         elif (bar.open, bar.high, bar.low, bar.close) != (o, h, l, c):
             bar.open, bar.high, bar.low, bar.close = o, h, l, c
-            bar.ha_open, bar.ha_high, bar.ha_low, bar.ha_close = hao, hah, hal, hac
             changed += 1
     return changed
 
 
-def run_ingest(period: str = "1mo") -> int:
+def run_ingest(period: str = "5d") -> int:
     from .db import session_scope
 
     provider = get_provider()

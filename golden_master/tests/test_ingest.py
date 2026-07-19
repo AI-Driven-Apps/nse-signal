@@ -1,19 +1,21 @@
 """Intraday ingest upsert logic, using a fake provider (no network) —
-mirrors the DB-fixture pattern used elsewhere in this test suite."""
+mirrors the DB-fixture pattern used elsewhere in this test suite. No HA
+columns to verify here (2026-07-18 rework): five_min_bars stores raw OHLC
+only, HA is derived at replay time from resampled 15-min buckets."""
 import pandas as pd
 import pytest
 from sqlalchemy import select
 
 from golden_master.db import session_scope
 from golden_master.ingest import ingest_symbol
-from golden_master.models import IntradayBar
+from golden_master.models import FiveMinBar
 
 
 class FakeProvider:
     def __init__(self, df: pd.DataFrame):
         self._df = df
 
-    def fetch(self, symbol: str, period: str = "1mo", interval: str = "15m") -> pd.DataFrame:
+    def fetch(self, symbol: str, period: str = "5d", interval: str = "5m") -> pd.DataFrame:
         return self._df
 
 
@@ -25,21 +27,20 @@ def _bars(rows: list[tuple[str, float, float, float, float]]) -> pd.DataFrame:
     }, index=idx)
 
 
-def test_ingest_inserts_new_bars_with_ha_columns(db):
+def test_ingest_inserts_new_bars(db):
     df = _bars([
         ("2024-06-04 09:15", 100.0, 101.0, 99.0, 100.5),
-        ("2024-06-04 09:30", 100.5, 102.0, 100.0, 101.5),
+        ("2024-06-04 09:20", 100.5, 102.0, 100.0, 101.5),
     ])
     with session_scope() as s:
         n = ingest_symbol(s, FakeProvider(df), "^NSEI")
     assert n == 2
 
     with session_scope() as s:
-        rows = s.execute(select(IntradayBar).order_by(IntradayBar.timestamp)).scalars().all()
+        rows = s.execute(select(FiveMinBar).order_by(FiveMinBar.timestamp)).scalars().all()
     assert len(rows) == 2
     assert rows[0].symbol == "^NSEI"
     assert rows[0].close == pytest.approx(100.5)
-    assert rows[0].ha_close == pytest.approx((100.0 + 101.0 + 99.0 + 100.5) / 4)
 
 
 def test_ingest_is_idempotent_on_unchanged_refetch(db):
@@ -50,7 +51,7 @@ def test_ingest_is_idempotent_on_unchanged_refetch(db):
         n = ingest_symbol(s, FakeProvider(df), "^NSEI")  # identical refetch
     assert n == 0
     with session_scope() as s:
-        assert len(s.execute(select(IntradayBar)).scalars().all()) == 1
+        assert len(s.execute(select(FiveMinBar)).scalars().all()) == 1
 
 
 def test_ingest_updates_changed_bars(db):
@@ -64,7 +65,7 @@ def test_ingest_updates_changed_bars(db):
     assert n == 1
 
     with session_scope() as s:
-        row = s.execute(select(IntradayBar)).scalar_one()
+        row = s.execute(select(FiveMinBar)).scalar_one()
     assert row.close == pytest.approx(102.0)
 
 

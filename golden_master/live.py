@@ -1,4 +1,4 @@
-"""Live polling: ingest new 15-min bars, replay the (already fully tested)
+"""Live polling: ingest new 5-min bars, replay the (already fully tested)
 backtest_range() over a recent window with treat_last_day_as_incomplete=True,
 and upsert the result — new signals get inserted (and alerted on Discord
 exactly once), already-open trades get their exit fields filled in once a
@@ -12,11 +12,11 @@ from datetime import datetime, timedelta
 import pandas as pd
 from sqlalchemy import select
 
-from .backtest import Trade, backtest_range
+from .backtest import Trade, backtest_range, compute_daily_levels, store_daily_levels
 from .config import SYMBOL
 from .db import session_scope
 from .ingest import run_ingest
-from .models import GoldenMasterTrade, IntradayBar
+from .models import FiveMinBar, GoldenMasterTrade
 from .notify import send_golden_master_signal
 
 log = logging.getLogger("golden_master.live")
@@ -30,9 +30,9 @@ def _load_recent_bars_df(session, symbol: str, lookback_days: int,
                          now: datetime | None = None) -> pd.DataFrame:
     cutoff = (now or datetime.utcnow()) - timedelta(days=lookback_days)
     rows = session.execute(
-        select(IntradayBar)
-        .where(IntradayBar.symbol == symbol, IntradayBar.timestamp >= cutoff)
-        .order_by(IntradayBar.timestamp.asc())
+        select(FiveMinBar)
+        .where(FiveMinBar.symbol == symbol, FiveMinBar.timestamp >= cutoff)
+        .order_by(FiveMinBar.timestamp.asc())
     ).scalars().all()
     if not rows:
         return pd.DataFrame()
@@ -88,6 +88,7 @@ def run_live_cycle(now: datetime | None = None) -> None:
             return
         trades = backtest_range(bars_df, treat_last_day_as_incomplete=True)
         new_trades = _upsert_live_trades(s, trades)
+        store_daily_levels(s, compute_daily_levels(bars_df))
 
     for t in new_trades:
         sent = send_golden_master_signal(

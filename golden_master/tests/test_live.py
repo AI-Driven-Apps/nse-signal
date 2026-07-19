@@ -1,7 +1,7 @@
 """Live polling: the upsert/dedup logic directly, and an end-to-end cycle
 (network ingestion monkeypatched to a no-op — bars are seeded straight into
-intraday_bars, reusing the same hand-verified bull-rejection scenario from
-test_backtest.py's _bull_rejection_df)."""
+five_min_bars, reusing the same hand-verified bull-rejection scenario from
+test_backtest.py's _bull_rejection_df, at 5-min granularity)."""
 from datetime import date, datetime
 
 import golden_master.live as live_mod
@@ -11,14 +11,14 @@ from sqlalchemy import select
 from golden_master.backtest import Trade
 from golden_master.db import session_scope
 from golden_master.live import _upsert_live_trades, run_live_cycle
-from golden_master.models import GoldenMasterTrade, IntradayBar
+from golden_master.models import FiveMinBar, GoldenMasterDailyLevels, GoldenMasterTrade
 
 
 def _trade(**overrides) -> Trade:
     base = dict(
         trade_date=date(2024, 6, 4), signal_type="REJECTION", direction="BUY",
-        entry_time=datetime(2024, 6, 4, 9, 45), entry_price=118.0,
-        sl_price=93.0, target_price=143.0,
+        entry_time=datetime(2024, 6, 4, 9, 40), entry_price=108.0,
+        sl_price=83.0, target_price=133.0,
         exit_time=None, exit_price=None, exit_reason=None, pnl_points=None,
         ce_strike=0.0, pe_strike=200.0,
     )
@@ -49,7 +49,7 @@ def test_upsert_does_not_duplicate_or_realert_on_replay(db):
 def test_upsert_resolves_a_previously_open_trade(db):
     with session_scope() as s:
         _upsert_live_trades(s, [_trade()])
-    resolved = _trade(exit_time=datetime(2024, 6, 4, 10, 0), exit_price=143.0,
+    resolved = _trade(exit_time=datetime(2024, 6, 4, 10, 0), exit_price=133.0,
                       exit_reason="TARGET_HIT", pnl_points=25.0)
     with session_scope() as s:
         new = _upsert_live_trades(s, [resolved])
@@ -61,20 +61,23 @@ def test_upsert_resolves_a_previously_open_trade(db):
 
 
 def _seed_bull_rejection_bars(session):
-    """The same hand-verified 4-bar sequence from test_backtest.py, inserted
-    directly as IntradayBar rows (as if ingest had already run)."""
+    """The same hand-verified 5-min sequence from test_backtest.py's
+    _bull_rejection_df base rows, inserted directly as FiveMinBar rows (as
+    if ingest had already run). Entry fires at 09:40 (raw high=108)."""
     bars = [
-        ("2024-06-03 15:15", 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0),
-        ("2024-06-04 09:15", 101.0, 101.0, 101.0, 101.0, 100.0, 101.0, 100.0, 101.0),
-        ("2024-06-04 09:30", 101.0, 108.0, 100.0, 106.0, 100.5, 108.0, 100.0, 103.75),
-        ("2024-06-04 09:45", 110.0, 118.0, 109.0, 116.0, 102.125, 118.0, 102.125, 113.25),
+        ("2024-06-03 15:15", 100.0, 100.0, 100.0, 100.0),
+        ("2024-06-03 15:20", 100.0, 100.0, 100.0, 100.0),
+        ("2024-06-03 15:25", 100.0, 100.0, 100.0, 100.0),
+        ("2024-06-04 09:15", 101.0, 101.0, 101.0, 101.0),
+        ("2024-06-04 09:20", 101.0, 101.0, 101.0, 101.0),
+        ("2024-06-04 09:25", 101.0, 101.0, 101.0, 101.0),
+        ("2024-06-04 09:30", 101.0, 103.0, 100.0, 102.0),
+        ("2024-06-04 09:35", 102.0, 106.0, 101.0, 104.0),
+        ("2024-06-04 09:40", 104.0, 108.0, 103.0, 106.0),
     ]
-    for ts, o, h, l, c, hao, hah, hal, hac in bars:
-        session.add(IntradayBar(
-            symbol="^NSEI", timestamp=datetime.fromisoformat(ts),
-            open=o, high=h, low=l, close=c,
-            ha_open=hao, ha_high=hah, ha_low=hal, ha_close=hac,
-        ))
+    for ts, o, h, l, c in bars:
+        session.add(FiveMinBar(symbol="^NSEI", timestamp=datetime.fromisoformat(ts),
+                               open=o, high=h, low=l, close=c))
 
 
 def test_run_live_cycle_opens_trade_and_alerts_once(db, monkeypatch):
@@ -91,10 +94,12 @@ def test_run_live_cycle_opens_trade_and_alerts_once(db, monkeypatch):
 
     with session_scope() as s:
         trades = s.execute(select(GoldenMasterTrade)).scalars().all()
+        levels = s.execute(select(GoldenMasterDailyLevels)).scalars().all()
     assert len(trades) == 1
     assert trades[0].signal_type == "REJECTION"
     assert trades[0].exit_reason is None  # last day, not yet resolved
     assert len(sent) == 1
+    assert len(levels) == 2  # prev day + today, snapshotted alongside the trade
 
     # Re-running with no new bars must not duplicate or re-alert.
     run_live_cycle(now=fixed_now)

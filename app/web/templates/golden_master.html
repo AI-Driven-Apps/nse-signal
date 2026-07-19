@@ -7,10 +7,32 @@
   (own container, own database). P/L below is in Nifty index points, not real
   option premium: no options-chain/Greeks data source is modeled, so a real
   trade's P&amp;L would differ due to premium/theta/IV effects. Trades below
-  are either live (polled from yfinance every ~15 min during market hours,
+  are either live (polled from yfinance every ~5 min during market hours,
   <code>source=live</code>) or from a manual CSV backtest
   (<code>source=backtest</code>) &mdash; see docs/golden_master_spec.md.
 </p>
+
+<h3>Today's levels</h3>
+{% if levels %}
+<table>
+  <tr><th>Line</th><th>Time</th><th>Price</th></tr>
+  <tr><td>Yellow 1 (prev-day 3:15 PM HA close)</td><td>15:15</td>
+      <td>{{ "%.2f"|format(levels.yellow1) if levels.yellow1 is not none else '—' }}</td></tr>
+  <tr><td>Yellow 2 (today 9:15 AM HA close)</td><td>09:15</td>
+      <td>{{ "%.2f"|format(levels.yellow2) if levels.yellow2 is not none else '—' }}</td></tr>
+  <tr><td>Blue 1 (9:30 AM HA close)</td><td>09:30</td>
+      <td>{{ "%.2f"|format(levels.blue1) if levels.blue1 is not none else '—' }}</td></tr>
+  <tr><td>Blue 2 (9:45 AM HA open)</td><td>09:45</td>
+      <td>{{ "%.2f"|format(levels.blue2) if levels.blue2 is not none else '—' }}</td></tr>
+  <tr><td>CE strike</td><td>9:15 open</td>
+      <td>{{ "%.0f"|format(levels.ce_strike) if levels.ce_strike is not none else '—' }}</td></tr>
+  <tr><td>PE strike</td><td>9:15 open</td>
+      <td>{{ "%.0f"|format(levels.pe_strike) if levels.pe_strike is not none else '—' }}</td></tr>
+</table>
+<p class="muted">As of {{ levels.trading_date }}.</p>
+{% else %}
+<p class="muted">No levels computed yet.</p>
+{% endif %}
 
 {% if not summary %}
 <p class="muted">No backtest results yet.</p>
