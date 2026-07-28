@@ -12,8 +12,35 @@
   (<code>source=backtest</code>) &mdash; see docs/golden_master_spec.md.
 </p>
 
+<style>
+  .gm-chart-wrap {
+    --gm-price: #1baf7a; --gm-yellow: #eda100; --gm-blue: #2a78d6; --gm-violet: #4a3aa7;
+    margin-bottom: 0.75rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    .gm-chart-wrap { --gm-price: #199e70; --gm-yellow: #c98500; --gm-blue: #3987e5; --gm-violet: #9085e9; }
+  }
+  .gm-legend { display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem; font-size: 0.82rem; margin-top: 0.6rem; }
+  .gm-legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .gm-swatch { display: inline-block; width: 16px; height: 0; border-top: 3px solid; }
+  .gm-swatch.gm-dashed { border-top-style: dashed; }
+</style>
+
 <h3>Today's levels</h3>
 {% if levels %}
+  {% if chart_labels %}
+  <div class="gm-chart-wrap">
+    <canvas id="levelsChart" height="110"></canvas>
+    <div class="gm-legend">
+      <span><i class="gm-swatch" style="border-color:var(--gm-price)"></i>Price</span>
+      {% for lvl in chart_levels %}
+      <span><i class="gm-swatch{{ ' gm-dashed' if lvl.dashed else '' }}" style="border-color:var(--gm-{{ lvl.color_role }})"></i>{{ lvl.name }} ({{ lvl.time }}): {{ "%.2f"|format(lvl.value) }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <p class="muted">No recent price bars to chart against yet.</p>
+  {% endif %}
 <table>
   <tr><th>Line</th><th>Time</th><th>Price</th></tr>
   <tr><td>Yellow 1 (prev-day 3:15 PM HA close)</td><td>15:15</td>
@@ -29,7 +56,8 @@
   <tr><td>PE strike</td><td>9:15 open</td>
       <td>{{ "%.0f"|format(levels.pe_strike) if levels.pe_strike is not none else '—' }}</td></tr>
 </table>
-<p class="muted">As of {{ levels.trading_date }}.</p>
+<p class="muted">As of {{ levels.trading_date }}. Table mirrors the chart above — use it if
+  the chart doesn't render.</p>
 {% else %}
 <p class="muted">No levels computed yet.</p>
 {% endif %}
@@ -88,5 +116,39 @@
 </table>
 {% else %}
 <p class="muted">No trades yet.</p>
+{% endif %}
+
+{% if levels and chart_labels %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  const gmStyle = getComputedStyle(document.querySelector('.gm-chart-wrap'));
+  const gmColor = (role) => gmStyle.getPropertyValue('--gm-' + role).trim();
+
+  const gmLabels = {{ chart_labels|tojson }};
+  const gmPrices = {{ chart_prices|tojson }};
+  const gmFlat = (v) => gmLabels.map(() => v);
+
+  const gmDatasets = [
+    { label: 'Price', data: gmPrices, borderColor: gmColor('price'), borderWidth: 2,
+      pointRadius: 0, tension: 0.1 },
+  ];
+  {% for lvl in chart_levels %}
+  gmDatasets.push({
+    label: {{ (lvl.name ~ ' (' ~ lvl.time ~ '): ' ~ '%.2f'|format(lvl.value))|tojson }},
+    data: gmFlat({{ lvl.value }}), borderColor: gmColor({{ lvl.color_role|tojson }}),
+    borderWidth: 2, borderDash: {{ ([6, 4] if lvl.dashed else [])|tojson }}, pointRadius: 0,
+  });
+  {% endfor %}
+
+  new Chart(document.getElementById('levelsChart'), {
+    type: 'line',
+    data: { labels: gmLabels, datasets: gmDatasets },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: false }, x: { ticks: { maxTicksLimit: 8 } } },
+      interaction: { mode: 'index', intersect: false },
+    },
+  });
+</script>
 {% endif %}
 {% endblock %}

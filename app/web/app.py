@@ -26,10 +26,25 @@ from .data import (
     watchlist_rows,
 )
 from .golden_master_data import (
-    latest_backtest_summary, latest_daily_levels, recent_trades as gm_recent_trades,
+    latest_backtest_summary, latest_daily_levels, recent_price_series,
+    recent_trades as gm_recent_trades,
 )
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+# (levels dict key, display name, time label, color role, dashed) — dashed
+# distinguishes the 2nd line in each color family (Yellow 2, Blue 2, PE) from
+# the 1st so identity never rests on hue alone. Color roles map to CSS custom
+# properties defined in golden_master.html (validated categorical palette —
+# see dataviz skill).
+GOLDEN_MASTER_LEVEL_DEFS = [
+    ("yellow1", "Yellow 1", "15:15", "yellow", False),
+    ("yellow2", "Yellow 2", "09:15", "yellow", True),
+    ("blue1", "Blue 1", "09:30", "blue", False),
+    ("blue2", "Blue 2", "09:45", "blue", True),
+    ("ce_strike", "CE strike", "09:15 open", "violet", False),
+    ("pe_strike", "PE strike", "09:15 open", "violet", True),
+]
 
 
 class NotAuthenticated(Exception):
@@ -212,8 +227,24 @@ def create_app() -> FastAPI:
         summary = latest_backtest_summary()
         trades = gm_recent_trades()
         levels = latest_daily_levels()
+        price_series = recent_price_series()
+        chart_labels = [p["timestamp"].strftime("%d %b %H:%M") for p in price_series]
+        chart_prices = [p["close"] for p in price_series]
+
+        chart_levels = []
+        if levels:
+            for key, name, time_label, color_role, dashed in GOLDEN_MASTER_LEVEL_DEFS:
+                value = levels.get(key)
+                if value is not None:
+                    chart_levels.append({
+                        "name": name, "time": time_label, "value": value,
+                        "color_role": color_role, "dashed": dashed,
+                    })
+
         return templates.TemplateResponse(request, "golden_master.html", {
             "user": user, "summary": summary, "trades": trades, "levels": levels,
+            "chart_labels": chart_labels, "chart_prices": chart_prices,
+            "chart_levels": chart_levels,
         })
 
     return app

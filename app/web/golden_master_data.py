@@ -5,6 +5,8 @@ golden_master.models: the two containers/images are deliberately
 independent (this container's image never has the golden_master package
 installed), so there is nothing to import — see docs/golden_master_spec.md.
 This module never writes; golden-master's own container owns all writes."""
+from datetime import timedelta
+
 from sqlalchemy import MetaData, Table, create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -73,3 +75,29 @@ def latest_daily_levels() -> dict | None:
             select(levels).order_by(levels.c.trading_date.desc()).limit(1)
         ).mappings().first()
     return dict(row) if row else None
+
+
+def recent_price_series(days: int = 2) -> list[dict]:
+    """Last `days` calendar days of 5-min closes (ascending), so the
+    dashboard can plot today's levels as reference lines against actual
+    price action — matches latest_daily_levels()'s scope (prev-day tail +
+    today). Reflected separately, same graceful-degradation pattern as
+    latest_daily_levels()."""
+    if _engine is None:
+        return []
+    try:
+        metadata = MetaData()
+        bars = Table("five_min_bars", metadata, autoload_with=_engine)
+    except Exception:
+        return []
+    with _SessionLocal() as s:
+        latest_ts = s.execute(select(bars.c.timestamp).order_by(bars.c.timestamp.desc()).limit(1)).scalar()
+        if latest_ts is None:
+            return []
+        cutoff = latest_ts - timedelta(days=days)
+        rows = s.execute(
+            select(bars.c.timestamp, bars.c.close)
+            .where(bars.c.timestamp >= cutoff)
+            .order_by(bars.c.timestamp.asc())
+        ).all()
+    return [{"timestamp": r.timestamp, "close": r.close} for r in rows]
