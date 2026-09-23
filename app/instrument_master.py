@@ -15,7 +15,10 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-SCRIP_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master-detailed.csv"
+# The "-detailed" variant of this CSV uses different, unprefixed column
+# names (EXCH_ID, SEGMENT, ...) and doesn't have the SEM_* columns this
+# module reads below — this is the compact scrip master, which does.
+SCRIP_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
 # Same directory as the token state file, so the Docker volume covers both.
 CACHE_PATH = Path(os.environ.get("DHAN_SCRIP_MASTER_CACHE", "scrip_master_cache.csv"))
 CACHE_MAX_AGE_HOURS = 20  # refresh once daily, before market open
@@ -50,7 +53,9 @@ def get_fno_underlyings(df: pd.DataFrame | None = None) -> list[str]:
     """Symbols that have F&O contracts — matches the reel's 'F&O 210' count."""
     df = df if df is not None else load_scrip_master()
     fno = df[(df["SEM_EXM_EXCH_ID"] == "NSE") & (df["SEM_SEGMENT"] == "D")]
-    return sorted(fno["SEM_TRADING_SYMBOL"].str.split(" ").str[0].unique().tolist())
+    # Derivative SEM_TRADING_SYMBOL is dash-joined, e.g. "RELIANCE-Sep2026-700-CE"
+    # or "RELIANCE-Sep2026-FUT" — the underlying is always the first segment.
+    return sorted(fno["SEM_TRADING_SYMBOL"].str.split("-").str[0].unique().tolist())
 
 
 def get_option_chain_instruments(

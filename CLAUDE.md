@@ -224,6 +224,26 @@ new tab).
   root (the compose service's `command`), which is why the file also does an
   explicit `sys.path.insert` for the `app.*` imports it needs (`app.db`,
   `app.strategies`, `app.web.data`) rather than assuming package context.
+- **Dhan publishes two different scrip-master CSVs with different column
+  schemas** — `api-scrip-master.csv` (compact, `SEM_*`-prefixed columns:
+  `SEM_EXM_EXCH_ID`, `SEM_SEGMENT`, `SEM_SERIES`, `SEM_TRADING_SYMBOL`,
+  `SEM_SMST_SECURITY_ID`, ...) and `api-scrip-master-detailed.csv` (same
+  data, unprefixed columns: `EXCH_ID`, `SEGMENT`, ...). `instrument_master.py`
+  was originally pointed at `-detailed.csv` while every column reference in
+  the file assumed the compact schema — `KeyError: 'SEM_EXM_EXCH_ID'` on
+  load. Fixed 2026-09-23: `SCRIP_MASTER_URL` now points at the compact CSV.
+  While in there, also fixed `get_fno_underlyings()`: derivative
+  `SEM_TRADING_SYMBOL` values are dash-joined (`"RELIANCE-Sep2026-700-CE"`),
+  not space-joined — it was splitting on `" "` (a no-op on these strings) and
+  silently tagging zero equities as F&O; verified against the live feed,
+  now correctly returns ~226 underlyings. **If you see the dashboard's
+  "F&O stocks" universe come back empty, or the same scrip-master KeyError
+  again after a fresh deploy**: the fix won't take effect until the stale
+  cached CSV in the `dashboard-data` volume expires (up to 20h,
+  `CACHE_MAX_AGE_HOURS`) or is deleted —
+  `docker compose exec dashboard rm -f /data-dashboard/scrip_master_cache.csv`
+  forces an immediate re-download without touching the Dhan token cache in
+  the same directory.
 
 ---
 
