@@ -68,3 +68,119 @@ Set `DATABASE_URL` to your Supabase Postgres connection string and add
 `psycopg2-binary` to requirements — no code changes needed (SQLAlchemy).
 
 **Paper trading only. Backtest results overstate live performance. Not financial advice.**
+
+# Market Dashboard (Dhan + NSE/BSE monitor)
+
+Read-only monitoring dashboard: NSE/BSE market status, live equity/F&O quotes
+via Dhan, and buy/sell signals from your backstage strategy registry.
+**No order placement** — execution stays manual by design.
+
+## Install (on the Pi, same env as backstage)
+
+```bash
+pip install dhanhq streamlit nsepython pandas
+```
+
+## Get a Dhan access token
+
+1. Log in at https://web.dhan.co
+2. My Profile → **Access DhanHQ APIs** → Generate Access Token
+3. Copy the token and your Client ID
+
+Tokens expire **24 hours** after generation — there's no long-lived refresh
+token for individual accounts, so budget for pasting a new one daily (the
+sidebar has a field for this; `dhan_client.py` tracks the issue time and
+tells you when it's stale rather than serving silently broken data).
+
+## Configure
+
+```bash
+export DHAN_CLIENT_ID="your_client_id"
+```
+
+Then run the dashboard once and paste your access token into the sidebar —
+it's cached to `.dhan_token_state.json` (gitignore this — it holds a live
+credential).
+
+## Wire in your strategy registry
+
+`dashboard.py` has a `WIRE-IN` block near the top — point it at wherever
+`STRATEGY_REGISTRY` and your EOD data loader live in the backstage repo, so
+`Strategy.positions(df)` stays the single source of truth for both backtests
+and this live view, same invariant as your Phase 1 design.
+
+## Run — locally
+
+```bash
+streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501
+```
+
+Then open `http://<pi-ip>:8501` from any device on your network.
+
+## Run — Docker (matches your backstage deployment style)
+
+```bash
+cp .env.example .env        # fill in DHAN_CLIENT_ID
+docker network ls           # confirm your backstage stack's network name,
+                             # update docker-compose.yml's networks block if
+                             # it isn't "backstage_default"
+docker compose up -d --build
+```
+
+Open `http://<pi-ip>:8501`. Token state persists in the `dashboard-data`
+named volume, so a container restart doesn't force a fresh token paste —
+only the 24h Dhan expiry does.
+
+**Memory**: capped at 400MB in `docker-compose.yml` (your backstage system
+targets a 512MB ceiling per container) — Streamlit + pandas + dhanhq fits
+comfortably under that at rest, but watch it if your watchlist or option-chain
+pulls grow large. Running this *alongside* the backstage container means
+checking the Pi's *total* free RAM, not just this container's cap — `docker
+stats` after both are up will show if you're tight.
+
+**Merging into one compose file instead of two**: if you'd rather run this as
+one more service inside your existing backstage `docker-compose.yml`, copy
+the `dashboard:` service block in from this project's compose file and drop
+the external `networks:` section — they'll already share a network as
+siblings in the same file.
+
+## Memory note (512MB Pi)
+
+- Poll quotes on a timer (e.g. every 15–30s during market hours only), not a
+  tight loop — Streamlit reruns the whole script on each interaction/refresh.
+- Keep the watchlist to symbols you're actually tracking; Dhan's quote API
+  accepts up to 1000 instruments per call but there's no reason to pull that
+  many on a memory-capped box.
+- If you outgrow Streamlit's memory footprint, the same `dhan_client.py` /
+  `market_status.py` modules work fine behind a lighter Flask+HTMX front end.
+
+## Scanner features (matching the reel you shared)
+
+- **Overview tab**: advances/declines/unchanged, near-high/near-low counts,
+  and a 0-100 strength gauge — computed from Dhan's own quotes across the
+  F&O universe (~210 stocks) or your custom watchlist, chunked to respect
+  the ~1000-instrument-per-call limit.
+- **Full Scanner tab**: sortable grid with a day-range bar (where LTP sits
+  between the day's high/low) and an OI-range bar (colored red/green,
+  Indian lakh/crore formatting) per row, "Show N" and sort-by controls.
+- **Option Chain tab**: ATM-tagged CE/PE rows for NIFTY/BANKNIFTY/FINNIFTY/
+  MIDCPNIFTY/SENSEX, pulling OI, IV, volume and LTP per strike from Dhan's
+  option-chain endpoint.
+- **Auto-refresh**: sidebar slider (5-60s), same idea as the reel's "poll
+  7849ms / next in 8s" — via `streamlit-autorefresh`.
+- **Trend sparklines**: `components.sparkline_svg` renders real minute-candle
+  data via `DhanMarketClient.get_intraday_minute_data` — not wired into the
+  scanner grid by default since pulling a full intraday series per row for
+  a couple hundred rows is expensive; wire it in per-row if you want it and
+  watch the Dhan call volume.
+
+**Instrument universe**: pulled once daily from Dhan's own scrip-master CSV
+(`instrument_master.py`, cached 6h in Streamlit + 20h on disk), so "F&O
+stocks" reflects Dhan's actual current F&O list rather than a hardcoded one.
+
+## Next steps once Dhan is stable
+
+- Swap in Zerodha Kite Connect the same way if you want a second broker's
+  data as a cross-check (paid API access, ₹2000/mo).
+- F&O option-chain calls (`get_option_chain`) need an expiry date — call
+  `get_expiry_list` first for a given underlying to get valid dates.
