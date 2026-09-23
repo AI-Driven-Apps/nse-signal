@@ -18,7 +18,7 @@ import streamlit as st
 import pandas as pd
 from streamlit_autorefresh import st_autorefresh
 
-from dhan_client import DhanMarketClient, DhanTokenExpiredError, set_token
+from dhan_client import DhanMarketClient, DhanTokenExpiredError, friendly_error, set_token
 from market_status import get_market_status, get_index_snapshot
 from instrument_master import (
     load_scrip_master, get_nse_equity_universe, get_fno_underlyings, INDEX_UNDERLYINGS,
@@ -127,7 +127,7 @@ with tab_overview:
             nl.metric("Near day low", breadth.near_low)
             st.caption(f"Universe: {breadth.total} scrips scanned")
         except Exception as e:
-            st.error(f"Market breadth unavailable: {e}")
+            st.error(f"Market breadth unavailable: {friendly_error(e)}")
     else:
         st.info("No securities in the selected universe.")
 
@@ -161,7 +161,7 @@ with tab_scanner:
                 cols[2].markdown(range_bar_html(row["ltp"], row["low"], row["high"]), unsafe_allow_html=True)
                 cols[3].markdown(oi_range_bar_html(row["oi"], max_oi_abs), unsafe_allow_html=True)
         except Exception as e:
-            st.error(f"Scanner unavailable: {e}")
+            st.error(f"Scanner unavailable: {friendly_error(e)}")
     else:
         st.info("No securities in the selected universe.")
 
@@ -200,7 +200,7 @@ with tab_options:
                 chain_df = pd.DataFrame(rows).sort_values(["strike", "type"])
                 st.dataframe(chain_df, use_container_width=True, hide_index=True)
     except Exception as e:
-        st.warning(f"Option chain unavailable: {e}")
+        st.warning(f"Option chain unavailable: {friendly_error(e)}")
 
 # --- Watchlist tab (raw quotes, original simple view) ---
 with tab_watchlist:
@@ -212,7 +212,7 @@ with tab_watchlist:
         try:
             st.json(client.get_quote({"NSE_EQ": ids}))
         except Exception as e:
-            st.error(f"Watchlist quote unavailable: {e}")
+            st.error(f"Watchlist quote unavailable: {friendly_error(e)}")
 
 # --- Signals tab ---
 with tab_signals:

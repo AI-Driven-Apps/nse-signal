@@ -48,7 +48,10 @@ class DhanApiError(RuntimeError):
     crashes with "'str' object has no attribute 'get'" (failure case) —
     see _unwrap() below, which every method on DhanMarketClient goes through.
     """
-    pass
+
+    def __init__(self, message: str, http_status: int | None = None):
+        super().__init__(message)
+        self.http_status = http_status
 
 
 def _unwrap(response: dict, what: str):
@@ -59,11 +62,34 @@ def _unwrap(response: dict, what: str):
         message = remarks.get("error_message") if isinstance(remarks, dict) else remarks
         status = remarks.get("http_status") if isinstance(remarks, dict) else None
         prefix = f"HTTP {status}: " if status else ""
-        raise DhanApiError(f"{what} failed: {prefix}{message or response!r}")
+        raise DhanApiError(f"{what} failed: {prefix}{message or response!r}", http_status=status)
     body = response.get("data")
     if isinstance(body, dict) and "data" in body and "status" in body:
         return body["data"]  # the common double-{status,data} envelope
     return body
+
+
+def friendly_error(e: Exception) -> str:
+    """
+    User-facing message for a Dhan call failure, for display in st.error().
+
+    A bare HTTP 401 with an empty Dhan error body (no errorCode/errorType/
+    errorMessage) means client ID and access token were both accepted as
+    well-formed but marketfeed access was refused — confirmed against this
+    project's own Dhan account 2026-09-23: generating a trading access token
+    does not by itself grant marketfeed/* (live quotes) access, that's a
+    separate Data API subscription that has to be purchased/activated
+    separately at web.dhan.co. If that gets activated and this still 401s,
+    the cause is something else (wrong client ID, stale token) — see the
+    plain str(e) fallback below and dhan_client's CLAUDE.md section.
+    """
+    if isinstance(e, DhanApiError) and e.http_status == 401:
+        return (
+            "Dhan Data API isn't active on this account — a trading access "
+            "token alone doesn't grant live-quote access. Activate/purchase "
+            "Data API access at web.dhan.co, then retry."
+        )
+    return str(e)
 
 
 def _patch_http_diagnostics(dhan_http) -> None:
@@ -147,7 +173,13 @@ class DhanMarketClient:
     """
 
     def __init__(self, client_id: str | None = None):
-        self.client_id = client_id or os.environ.get("DHAN_CLIENT_ID")
+        # docker-compose's env_file parser doesn't strip quotes the way a
+        # shell does — DHAN_CLIENT_ID="123" in .env becomes the literal
+        # string '"123"' (quotes included), which silently breaks auth as a
+        # 401 with no useful error body. Normalize defensively, same as
+        # set_token() already does for the pasted access token below.
+        raw_client_id = client_id or os.environ.get("DHAN_CLIENT_ID") or ""
+        self.client_id = raw_client_id.strip().strip("'\"")
         if not self.client_id:
             raise ValueError("DHAN_CLIENT_ID not set (env var or constructor arg)")
 

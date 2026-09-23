@@ -294,6 +294,35 @@ new tab).
   now also wrapped in try/except (it wasn't before, unlike the other three
   tabs) so a future Dhan hiccup there shows `st.error(...)` instead of a
   full traceback.
+- **`HTTP 401` from `marketfeed/quote` — CONFIRMED CAUSE: Dhan's Data API
+  subscription isn't purchased/active on the project owner's account.**
+  Not a bug in this repo — client ID and a freshly-pasted token were both
+  verified correct first, which ruled out the config-level explanations
+  below. Generating a trading access token alone does not grant access to
+  `marketfeed/*` (live quotes, breadth, scanner, option chain) — that's a
+  separate paid entitlement on Dhan's side. **Every Dhan-dependent tab
+  (Overview breadth, Full Scanner, Option Chain, Watchlist) is expected to
+  fail with this exact 401 until that subscription is purchased/activated
+  at web.dhan.co.** This is not something more debugging in this repo will
+  fix. NSE/BSE status + index snapshot (Overview tab, top of page) don't
+  depend on Dhan at all (`market_status.py` uses nsepython/nseindia.com) and
+  keep working regardless.
+  One real code gotcha was fixed defensively while chasing this
+  2026-09-23 (harmless either way, keep it): docker-compose's `env_file`
+  parser does not strip quotes the way a shell does, so
+  `DHAN_CLIENT_ID="123"` in `.env` becomes the literal string `"123"`
+  (quotes included) — `DhanMarketClient.__init__` now strips surrounding
+  quotes/whitespace from `DHAN_CLIENT_ID`, same as `set_token()` already did
+  for the pasted access token.
+  Also added `dhan_client.friendly_error(e)`: `DhanApiError` now carries
+  `.http_status`, and `friendly_error()` turns a bare 401 into "Dhan Data
+  API isn't active on this account..." instead of the raw `HTTP 401: {...}`
+  dump — every other error type (429, a real auth problem once Data API
+  *is* active, anything else) still falls through to the plain message. All
+  four Dhan-dependent tabs' `except` blocks call it. If Data API access gets
+  purchased and a 401 still shows, this message would now be actively
+  wrong — that's the signal to come back and re-diagnose rather than trust
+  the friendly text.
 - **`nse_get_index_quote()` (nsepython) hits a dead host** — confirmed via
   direct DNS lookup that `iislliveblob.niftyindices.com` is NXDOMAIN, not a
   transient/local network issue. Fixed 2026-09-23: `market_status.py`'s
