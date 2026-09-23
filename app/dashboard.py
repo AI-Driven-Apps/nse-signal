@@ -209,7 +209,10 @@ with tab_watchlist:
     ).split(",")
     ids = [s.strip() for s in raw_ids if s.strip()]
     if ids:
-        st.json(client.get_quote({"NSE_EQ": ids}))
+        try:
+            st.json(client.get_quote({"NSE_EQ": ids}))
+        except Exception as e:
+            st.error(f"Watchlist quote unavailable: {e}")
 
 # --- Signals tab ---
 with tab_signals:

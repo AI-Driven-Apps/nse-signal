@@ -22,6 +22,11 @@ from dhanhq import DhanContext, dhanhq
 
 TOKEN_STATE_PATH = Path(os.environ.get("DHAN_TOKEN_STATE", ".dhan_token_state.json"))
 TOKEN_LIFETIME_HOURS = 24
+# Dhan's marketfeed docs cap these endpoints at 1 request/second. Streamlit
+# reruns every tab's code on every rerun (not just the visible tab), so the
+# Overview, Scanner, and Watchlist tabs' quote calls all fire within the same
+# script execution — comfortably faster than 1/sec without this throttle.
+MIN_CALL_INTERVAL_SECONDS = 1.1
 
 
 class DhanTokenExpiredError(RuntimeError):
@@ -52,11 +57,33 @@ def _unwrap(response: dict, what: str):
     if not isinstance(response, dict) or response.get("status") != "success":
         remarks = response.get("remarks") if isinstance(response, dict) else None
         message = remarks.get("error_message") if isinstance(remarks, dict) else remarks
-        raise DhanApiError(f"{what} failed: {message or response!r}")
+        status = remarks.get("http_status") if isinstance(remarks, dict) else None
+        prefix = f"HTTP {status}: " if status else ""
+        raise DhanApiError(f"{what} failed: {prefix}{message or response!r}")
     body = response.get("data")
     if isinstance(body, dict) and "data" in body and "status" in body:
         return body["data"]  # the common double-{status,data} envelope
     return body
+
+
+def _patch_http_diagnostics(dhan_http) -> None:
+    """
+    dhanhq's own _parse_response() only extracts errorCode/errorType/
+    errorMessage from the response body — on a gateway-level rejection
+    (rate limit, auth) whose body isn't shaped like Dhan's own app-level
+    error JSON, all three come back None and the real HTTP status code
+    (the one signal that tells a 429 from a 401) is discarded. Wrap it once
+    per client to keep that status code in `remarks` for _unwrap() to show.
+    """
+    original = dhan_http._parse_response
+
+    def _parse_response_with_status(response, *args, **kwargs):
+        result = original(response, *args, **kwargs)
+        if result.get("status") != "success" and isinstance(result.get("remarks"), dict):
+            result["remarks"]["http_status"] = response.status_code
+        return result
+
+    dhan_http._parse_response = _parse_response_with_status
 
 
 def _coerce_securities(securities: dict) -> dict:
@@ -139,10 +166,20 @@ class DhanMarketClient:
         self._token_state = state
         context = DhanContext(self.client_id, state.access_token)
         self._dhan = dhanhq(context)
+        _patch_http_diagnostics(self._dhan.dhan_http)
+        self._last_call_at = 0.0
 
     @property
     def token_hours_remaining(self) -> float:
         return self._token_state.hours_remaining
+
+    def _throttle(self) -> None:
+        """Keep consecutive Dhan calls >= MIN_CALL_INTERVAL_SECONDS apart —
+        see the constant's comment for why this matters within one rerun."""
+        elapsed = time.monotonic() - self._last_call_at
+        if elapsed < MIN_CALL_INTERVAL_SECONDS:
+            time.sleep(MIN_CALL_INTERVAL_SECONDS - elapsed)
+        self._last_call_at = time.monotonic()
 
     def get_ltp(self, securities: dict) -> dict:
         """
@@ -150,6 +187,7 @@ class DhanMarketClient:
         Returns {"NSE_EQ": {security_id: {...}, ...}, ...} for up to 1000
         instruments per call — already unwrapped, see DhanApiError.
         """
+        self._throttle()
         securities = _coerce_securities(securities)
         raw = self._dhan.ohlc_data(securities=securities) if hasattr(self._dhan, "ohlc_data") \
             else self._dhan.quote_data(securities=securities)
@@ -157,6 +195,7 @@ class DhanMarketClient:
 
     def get_quote(self, securities: dict) -> dict:
         """Full quote incl. OI, depth — same securities dict shape as get_ltp."""
+        self._throttle()
         raw = self._dhan.quote_data(securities=_coerce_securities(securities))
         return _unwrap(raw, "get_quote")
 
@@ -165,6 +204,7 @@ class DhanMarketClient:
         F&O option chain: OI, greeks, volume, top bid/ask per strike.
         expiry format: "YYYY-MM-DD" — call get_expiry_list first if unknown.
         """
+        self._throttle()
         raw = self._dhan.option_chain(
             under_security_id=under_security_id,
             under_exchange_segment=under_exchange_segment,
@@ -173,6 +213,7 @@ class DhanMarketClient:
         return _unwrap(raw, "get_option_chain")
 
     def get_expiry_list(self, under_security_id: str, under_exchange_segment: str) -> list:
+        self._throttle()
         raw = self._dhan.expiry_list(
             under_security_id=under_security_id,
             under_exchange_segment=under_exchange_segment,
@@ -181,6 +222,7 @@ class DhanMarketClient:
 
     def get_fund_limits(self) -> dict:
         """Read-only — balance/margin info, no trading action."""
+        self._throttle()
         return _unwrap(self._dhan.get_fund_limits(), "get_fund_limits")
 
     def get_intraday_minute_data(self, security_id: str, exchange_segment: str, instrument_type: str = "EQUITY"):
@@ -190,6 +232,7 @@ class DhanMarketClient:
         try/except at the call site since exact kwargs have shifted across
         dhanhq releases — confirm against your installed version if it errors.
         """
+        self._throttle()
         raw = self._dhan.intraday_minute_data(
             security_id=security_id,
             exchange_segment=exchange_segment,

@@ -272,6 +272,28 @@ new tab).
   call must go through `_unwrap()` — don't reach into `response["data"]`
   directly, the nesting depth differs between dhanhq's own wrapper and
   Dhan's REST body and is easy to get wrong again.
+- **Follow-up on the above, found via the next real failure**: a gateway-
+  level rejection (rate limit, auth) doesn't come back shaped like Dhan's
+  app-level `{errorCode, errorType, errorMessage}` error JSON, so dhanhq's
+  own `_parse_response()` finds none of those keys and `remarks` comes back
+  all-`None` — the one piece of ground truth (the real HTTP status code) is
+  discarded by dhanhq before it ever reaches us. Fixed 2026-09-23:
+  `_patch_http_diagnostics()` wraps `dhan_http._parse_response` once per
+  client to stash `response.status_code` into `remarks["http_status"]`;
+  `_unwrap()` now prefixes the raised message with `HTTP {status}:` when
+  present, so a 429 vs. 401 vs. 5xx is visible instead of three `None`s.
+  Likely cause of the specific failure that surfaced this: Dhan's
+  `marketfeed/*` endpoints are documented at **1 request/second**, but
+  Streamlit reruns every tab's code on every rerun (not just the visible
+  one) — Overview's `compute_breadth`, the Scanner tab's
+  `quotes_to_dataframe`, and the Watchlist tab's raw `get_quote` all fired
+  within the same script execution, comfortably faster than 1/sec. Fixed by
+  adding `DhanMarketClient._throttle()` (`MIN_CALL_INTERVAL_SECONDS = 1.1`),
+  called at the top of every method that hits the network — verified it
+  correctly spaces consecutive calls ~1.1s apart. Watchlist tab's quote call
+  now also wrapped in try/except (it wasn't before, unlike the other three
+  tabs) so a future Dhan hiccup there shows `st.error(...)` instead of a
+  full traceback.
 - **`nse_get_index_quote()` (nsepython) hits a dead host** — confirmed via
   direct DNS lookup that `iislliveblob.niftyindices.com` is NXDOMAIN, not a
   transient/local network issue. Fixed 2026-09-23: `market_status.py`'s
