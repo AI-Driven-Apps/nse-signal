@@ -13,8 +13,33 @@ services:
       - ./data:/data                          # SQLite DB persists here — back this folder up
       - ./data-golden-master:/data-golden-master:ro
     ports:
-      - "8000:8000"           # dashboard — LAN only, do not forward on your router
+      - "8000:8000"           # web UI — LAN only, do not forward on your router
     mem_limit: 512m           # keep the Pi responsive for your YT pipeline
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  dashboard:
+    build: .
+    container_name: nse-signal-dashboard
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=Asia/Kolkata
+      # Token + scrip-master cache go on the named volume below, not the
+      # container filesystem, so a restart doesn't force a fresh token paste.
+      - DHAN_TOKEN_STATE=/data-dashboard/.dhan_token_state.json
+      - DHAN_SCRIP_MASTER_CACHE=/data-dashboard/scrip_master_cache.csv
+    command: ["python", "-m", "streamlit", "run", "app/dashboard.py",
+              "--server.address", "0.0.0.0", "--server.port", "8501"]
+    volumes:
+      - ./data:/data:ro          # same DB as nse-signal — read-only, display-only dashboard
+      - dashboard-data:/data-dashboard
+    ports:
+      - "8501:8501"           # dashboard — LAN only, do not forward on your router
+    mem_limit: 400m            # Streamlit + pandas + dhanhq; watch `docker stats` alongside nse-signal
     logging:
       driver: json-file
       options:
@@ -39,3 +64,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  dashboard-data:   # Dhan token cache + scrip-master CSV, survives container restarts

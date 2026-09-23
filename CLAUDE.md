@@ -32,6 +32,13 @@ docker-compose.yml   ./data volume, mem_limit 512m, TZ Asia/Kolkata
 golden_master/       separate subsystem, own container/DB/backtester — an
                       intraday Nifty options strategy, deliberately outside
                       invariant 5 below. See docs/golden_master_spec.md.
+
+app/dashboard.py     Market Dashboard — separate subsystem, own Streamlit
+  app/dhan_client.py       process/container, deliberately outside invariant 7
+  app/market_status.py     below. Read-only Dhan live quotes + NSE/BSE status,
+  app/instrument_master.py NOT the Phase 2 dashboard above. See "Market
+  app/scanner.py           Dashboard" section below.
+  app/components.py
 ```
 
 Scheduler (IST): ingest + signals Mon–Fri 18:30; universe backtest Sun 10:00.
@@ -57,7 +64,10 @@ Scheduler (IST): ingest + signals Mon–Fri 18:30; universe backtest Sun 10:00.
    (dedup exists — preserve it).
 7. **Pi budget.** Single container, 512 MB cap, ARM64. No Node build step,
    no heavy deps (no bokeh/plotly server-side, no Celery/Redis). It coexists
-   with a YouTube pipeline on the same Pi.
+   with a YouTube pipeline on the same Pi. `dashboard` (Market Dashboard,
+   Streamlit) is a deliberate, isolated exception on its own 400MB container —
+   same pattern as `golden_master` in invariant 5. Check total free Pi RAM
+   across all three containers, not just one cap, before adding a fourth.
 8. **Secrets in env only.** `.env` is gitignored; never hardcode webhook
    URLs, keys, or connection strings.
 
@@ -162,6 +172,50 @@ same container, one new port (8000) exposed on the Pi/LAN only.
   tables; login + API rate limiting; Discord webhook never sent to the
   client; CSP + secure cookie flags; dependency pinning; daily DB backup
   (Supabase PITR or pg_dump cron); no CORS wildcard.
+
+---
+
+## Market Dashboard — Dhan + NSE/BSE monitor (separate subsystem)
+
+**Not the same thing as the Phase 2 dashboard above.** Two different UIs
+answer to "dashboard" in this repo:
+- Phase 2 dashboard = the FastAPI + Jinja2 site on **:8000**, `docker compose
+  up` service `nse-signal`, behind login, the "site" a user browses day to
+  day (routes in `app/web/app.py`).
+- **Market Dashboard** = a separate **Streamlit** app on **:8501**, service
+  `dashboard` in `docker-compose.yml`, **no login of its own** — LAN only,
+  same as the main site's own port. Live Dhan equity/F&O quotes, NSE/BSE
+  market status, option chain. Read-only: no order placement, ever.
+
+It was added without a compose service, without the `market_status.py`
+module its own imports required, and without a nav link — so it never
+actually ran. Fixed 2026-09-23: `dashboard` service added to
+`docker-compose.yml` (mounts `./data:/data:ro` — same SQLite DB as
+`nse-signal`, read-only; token + scrip-master cache persist in the
+`dashboard-data` named volume so a restart doesn't force a fresh Dhan token
+paste), `app/market_status.py` written (NSE status via `nsepython`; BSE has
+no equivalent live source so it's approximated from NSE/BSE's shared cash
+market hours — 09:15–15:30 IST Mon–Fri — swap in a real feed if one turns
+up), `STRATEGY_REGISTRY` wired to the real `app.strategies.STRATEGIES`
+registry, and the Signals tab now reads already-computed rows via
+`app.web.data.recent_signals()` instead of recomputing positions itself
+(keeps invariant 1 — `Strategy.positions(df)` stays the one call site that
+matters, the dashboard only displays what the nightly engine already ran).
+Nav link added to `base.html` (opens :8501 in a new tab).
+
+- `DHAN_CLIENT_ID` env var (long-lived) goes in `.env`; the Dhan **access
+  token** itself expires every 24h with no refresh token for individual
+  accounts — paste a fresh one into the dashboard's own sidebar daily, it is
+  never stored in `.env`.
+- No auth on :8501 is a known, accepted gap for a LAN-only single-user box —
+  don't add real-order execution or expose this port publicly without
+  revisiting that.
+- `app/dashboard.py`'s own sibling imports (`dhan_client`, `market_status`,
+  `instrument_master`, `scanner`, `components`) are bare imports — they rely
+  on being run via `python -m streamlit run app/dashboard.py` from the repo
+  root (the compose service's `command`), which is why the file also does an
+  explicit `sys.path.insert` for the `app.*` imports it needs (`app.db`,
+  `app.strategies`, `app.web.data`) rather than assuming package context.
 
 ---
 

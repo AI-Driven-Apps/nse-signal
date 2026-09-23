@@ -1,15 +1,18 @@
 """
 Single-page trading dashboard: market status/breadth, live equity + F&O
-scanner, option chain, and signals from your backstage strategy registry.
+scanner, option chain, and signals from app.strategies.STRATEGIES.
 
-Run: streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501
+Run (from repo root): python -m streamlit run app/dashboard.py \
+    --server.address 0.0.0.0 --server.port 8501
+(the docker-compose `dashboard` service runs exactly this)
 
-Display-only — no orders placed from here. Wire your strategy registry in
-at the WIRE-IN marker below.
+Display-only — no orders placed from here.
 """
 
+import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 import pandas as pd
@@ -23,13 +26,16 @@ from instrument_master import (
 from scanner import compute_breadth, quotes_to_dataframe
 from components import format_inr_compact, range_bar_html, oi_range_bar_html, strength_gauge_html
 
-st.set_page_config(page_title="Market Dashboard", layout="wide")
+# dashboard.py lives at app/dashboard.py and is run as a standalone script
+# (its sibling imports above rely on Python adding this file's own directory
+# to sys.path), so reaching the `app` package for the signal registry and DB
+# needs the repo root added explicitly rather than assumed.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from app.db import session_scope  # noqa: E402
+from app.strategies import STRATEGIES  # noqa: E402
+from app.web.data import recent_signals  # noqa: E402
 
-# --- WIRE-IN: point this at your backstage strategy registry -----------------
-# from backstage.strategies import STRATEGY_REGISTRY
-# from backstage.data import load_eod_frame
-STRATEGY_REGISTRY = {}  # placeholder until wired to your existing repo
-# -------------------------------------------------------------------------------
+st.set_page_config(page_title="Market Dashboard", layout="wide")
 
 # --- Sidebar: token + refresh controls ---
 st.sidebar.header("Connection")
@@ -201,17 +207,15 @@ with tab_watchlist:
 
 # --- Signals tab ---
 with tab_signals:
-    st.subheader("Signals (manual execution)")
-    if not STRATEGY_REGISTRY:
-        st.info("Strategy registry not wired in yet - see WIRE-IN comment at the top of dashboard.py.")
+    st.subheader("Recent signals (manual execution)")
+    st.caption(
+        f"Registered strategies: {', '.join(STRATEGIES)}. Rows below are what the "
+        "nightly signal engine already computed via Strategy.positions() (see /signals "
+        "on the main site) — this tab reads that, it never recomputes positions itself."
+    )
+    with session_scope() as s:
+        signal_rows = recent_signals(s, limit=25)
+    if signal_rows:
+        st.dataframe(pd.DataFrame(signal_rows), use_container_width=True, hide_index=True)
     else:
-        rows = []
-        for name, strategy in STRATEGY_REGISTRY.items():
-            # df = load_eod_frame(symbol)
-            # positions = strategy.positions(df)
-            # rows.append({"strategy": name, "symbol": symbol, "signal": positions.iloc[-1]})
-            pass
-        if rows:
-            st.dataframe(pd.DataFrame(rows))
-        else:
-            st.write("No signals computed yet.")
+        st.write("No signals computed yet.")

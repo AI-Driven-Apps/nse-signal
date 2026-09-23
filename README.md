@@ -75,10 +75,13 @@ Read-only monitoring dashboard: NSE/BSE market status, live equity/F&O quotes
 via Dhan, and buy/sell signals from your backstage strategy registry.
 **No order placement** — execution stays manual by design.
 
-## Install (on the Pi, same env as backstage)
+## Install
+
+Already in `requirements.txt` and baked into the Docker image — no separate
+install step for `docker compose up -d`. For running it outside Docker:
 
 ```bash
-pip install dhanhq streamlit nsepython pandas
+pip install dhanhq streamlit streamlit-autorefresh nsepython pandas
 ```
 
 ## Get a Dhan access token
@@ -94,55 +97,54 @@ tells you when it's stale rather than serving silently broken data).
 
 ## Configure
 
-```bash
-export DHAN_CLIENT_ID="your_client_id"
+Add to your `.env` (see `.env.example`):
+
+```
+DHAN_CLIENT_ID=your_client_id
 ```
 
 Then run the dashboard once and paste your access token into the sidebar —
-it's cached to `.dhan_token_state.json` (gitignore this — it holds a live
+it's cached to the path `DHAN_TOKEN_STATE` points at (the `dashboard-data`
+volume in Docker; gitignore this if running it bare — it holds a live
 credential).
 
-## Wire in your strategy registry
+## Strategy registry
 
-`dashboard.py` has a `WIRE-IN` block near the top — point it at wherever
-`STRATEGY_REGISTRY` and your EOD data loader live in the backstage repo, so
-`Strategy.positions(df)` stays the single source of truth for both backtests
-and this live view, same invariant as your Phase 1 design.
+`app/dashboard.py`'s Signals tab reads `app.strategies.STRATEGIES` and the
+already-computed rows in the `signals` table via `app.web.data.recent_signals()`
+— it displays what the nightly signal engine already ran, it never recomputes
+`Strategy.positions(df)` itself, so that stays the single source of truth
+(invariant 1) for both backtests and this view.
 
-## Run — locally
+## Run — locally (outside Docker)
 
 ```bash
-streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501
+streamlit run app/dashboard.py --server.address 0.0.0.0 --server.port 8501
 ```
 
 Then open `http://<pi-ip>:8501` from any device on your network.
 
-## Run — Docker (matches your backstage deployment style)
+## Run — Docker (same compose file as the main site)
 
 ```bash
-cp .env.example .env        # fill in DHAN_CLIENT_ID
-docker network ls           # confirm your backstage stack's network name,
-                             # update docker-compose.yml's networks block if
-                             # it isn't "backstage_default"
+cp .env.example .env        # fill in DHAN_CLIENT_ID alongside the rest
 docker compose up -d --build
 ```
 
-Open `http://<pi-ip>:8501`. Token state persists in the `dashboard-data`
-named volume, so a container restart doesn't force a fresh token paste —
-only the 24h Dhan expiry does.
+This starts it as the `dashboard` service alongside `nse-signal` and
+`golden-master`, on the same network, same `docker-compose.yml`. Open
+`http://<pi-ip>:8501`, or click "Market Dashboard" from the main site's nav
+(`http://<pi-ip>:8000`) — that link just opens :8501 in a new tab; the
+Streamlit app has no login of its own. Token state persists in the
+`dashboard-data` named volume, so a container restart doesn't force a fresh
+token paste — only the 24h Dhan expiry does.
 
-**Memory**: capped at 400MB in `docker-compose.yml` (your backstage system
+**Memory**: capped at 400MB in `docker-compose.yml` (the rest of this system
 targets a 512MB ceiling per container) — Streamlit + pandas + dhanhq fits
 comfortably under that at rest, but watch it if your watchlist or option-chain
-pulls grow large. Running this *alongside* the backstage container means
-checking the Pi's *total* free RAM, not just this container's cap — `docker
-stats` after both are up will show if you're tight.
-
-**Merging into one compose file instead of two**: if you'd rather run this as
-one more service inside your existing backstage `docker-compose.yml`, copy
-the `dashboard:` service block in from this project's compose file and drop
-the external `networks:` section — they'll already share a network as
-siblings in the same file.
+pulls grow large. Running all three containers together means checking the
+Pi's *total* free RAM, not just one container's cap — `docker stats` will
+show if you're tight.
 
 ## Memory note (512MB Pi)
 
