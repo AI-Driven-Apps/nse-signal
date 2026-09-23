@@ -114,17 +114,20 @@ with tab_overview:
     ic1.json(index_snap)
 
     if security_ids:
-        breadth = compute_breadth(client, security_ids)
-        ic2.write("**Market breadth**")
-        b1, b2, b3 = ic2.columns(3)
-        b1.metric("Advances", breadth.advances)
-        b2.metric("Declines", breadth.declines)
-        b3.metric("Unchanged", breadth.unchanged)
-        st.markdown(strength_gauge_html(breadth.strength, breadth.label), unsafe_allow_html=True)
-        nh, nl = st.columns(2)
-        nh.metric("Near day high", breadth.near_high)
-        nl.metric("Near day low", breadth.near_low)
-        st.caption(f"Universe: {breadth.total} scrips scanned")
+        try:
+            breadth = compute_breadth(client, security_ids)
+            ic2.write("**Market breadth**")
+            b1, b2, b3 = ic2.columns(3)
+            b1.metric("Advances", breadth.advances)
+            b2.metric("Declines", breadth.declines)
+            b3.metric("Unchanged", breadth.unchanged)
+            st.markdown(strength_gauge_html(breadth.strength, breadth.label), unsafe_allow_html=True)
+            nh, nl = st.columns(2)
+            nh.metric("Near day high", breadth.near_high)
+            nl.metric("Near day low", breadth.near_low)
+            st.caption(f"Universe: {breadth.total} scrips scanned")
+        except Exception as e:
+            st.error(f"Market breadth unavailable: {e}")
     else:
         st.info("No securities in the selected universe.")
 
@@ -134,28 +137,31 @@ with tab_scanner:
     sort_by = st.selectbox("Sort by", ["pct_change", "ltp", "oi"], index=0)
 
     if security_ids:
-        df = quotes_to_dataframe(client, security_ids)
-        df = df.merge(
-            active_universe[["SEM_SMST_SECURITY_ID", "SEM_TRADING_SYMBOL"]]
-            .rename(columns={"SEM_SMST_SECURITY_ID": "security_id", "SEM_TRADING_SYMBOL": "symbol"})
-            .assign(security_id=lambda d: d["security_id"].astype(str)),
-            on="security_id", how="left",
-        )
-        df = df.sort_values(sort_by, ascending=False, na_position="last").head(show_n)
-        max_oi_abs = df["oi"].abs().max() or 1
+        try:
+            df = quotes_to_dataframe(client, security_ids)
+            df = df.merge(
+                active_universe[["SEM_SMST_SECURITY_ID", "SEM_TRADING_SYMBOL"]]
+                .rename(columns={"SEM_SMST_SECURITY_ID": "security_id", "SEM_TRADING_SYMBOL": "symbol"})
+                .assign(security_id=lambda d: d["security_id"].astype(str)),
+                on="security_id", how="left",
+            )
+            df = df.sort_values(sort_by, ascending=False, na_position="last").head(show_n)
+            max_oi_abs = df["oi"].abs().max() or 1
 
-        st.write(f"**{len(df)} of {len(security_ids)} scrips**")
-        for _, row in df.iterrows():
-            cols = st.columns([2, 1, 2, 2])
-            cols[0].write(f"**{row['symbol']}**  {row['ltp'] if pd.notna(row['ltp']) else '-'}")
-            pct = row["pct_change"]
-            if pd.notna(pct):
-                color = "#2ecc71" if pct >= 0 else "#e74c3c"
-                cols[1].markdown(f"<span style='color:{color}'>{pct:+.2f}%</span>", unsafe_allow_html=True)
-            else:
-                cols[1].write("-")
-            cols[2].markdown(range_bar_html(row["ltp"], row["low"], row["high"]), unsafe_allow_html=True)
-            cols[3].markdown(oi_range_bar_html(row["oi"], max_oi_abs), unsafe_allow_html=True)
+            st.write(f"**{len(df)} of {len(security_ids)} scrips**")
+            for _, row in df.iterrows():
+                cols = st.columns([2, 1, 2, 2])
+                cols[0].write(f"**{row['symbol']}**  {row['ltp'] if pd.notna(row['ltp']) else '-'}")
+                pct = row["pct_change"]
+                if pd.notna(pct):
+                    color = "#2ecc71" if pct >= 0 else "#e74c3c"
+                    cols[1].markdown(f"<span style='color:{color}'>{pct:+.2f}%</span>", unsafe_allow_html=True)
+                else:
+                    cols[1].write("-")
+                cols[2].markdown(range_bar_html(row["ltp"], row["low"], row["high"]), unsafe_allow_html=True)
+                cols[3].markdown(oi_range_bar_html(row["oi"], max_oi_abs), unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Scanner unavailable: {e}")
     else:
         st.info("No securities in the selected universe.")
 
@@ -168,10 +174,10 @@ with tab_options:
         expiry = st.selectbox("Expiry", expiries)
         if expiry:
             chain = client.get_option_chain(info["security_id"], info["segment"], expiry)
-            spot = chain.get("data", {}).get("last_price")
+            spot = chain.get("last_price")
             st.metric(f"{underlying} spot", spot)
 
-            oc = chain.get("data", {}).get("oc", {})
+            oc = chain.get("oc", {})
             rows = []
             if oc:
                 nearest_strike_diff = min(abs(float(s) - spot) for s in oc.keys()) if spot else None

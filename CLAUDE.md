@@ -244,6 +244,41 @@ new tab).
   `docker compose exec dashboard rm -f /data-dashboard/scrip_master_cache.csv`
   forces an immediate re-download without touching the Dhan token cache in
   the same directory.
+- **dhanhq's response envelope is double-wrapped, and the original code
+  never accounted for it** — `AttributeError: 'str' object has no attribute
+  'get'` in `scanner.compute_breadth`. `dhanhq`'s HTTP layer
+  (`dhan_http.DhanHTTP._parse_response`) wraps every call as
+  `{status, remarks, data}`: on success `data` holds Dhan's raw response
+  body verbatim, which for most endpoints is *itself* a second
+  `{status, data}` envelope — the real payload is two levels deep. On
+  failure `data` is `''` (empty string, not `{}`) and the actual error is in
+  `remarks`. The original `quote.get("data", {}).get(segment, {})` pattern
+  either silently returned `{}` on success (wrong nesting level — market
+  breadth and the scanner grid were *always* empty, even when the Dhan call
+  worked) or crashed on failure. Same double-`.get("data", ...)` bug existed
+  in the Option Chain tab. Fixed 2026-09-23: `dhan_client.py` now runs every
+  dhanhq call through `_unwrap()`, which normalizes to just the payload or
+  raises `DhanApiError` with Dhan's real `error_message` — every
+  `DhanMarketClient` method (`get_ltp`, `get_quote`, `get_option_chain`,
+  `get_expiry_list`, `get_fund_limits`, `get_intraday_minute_data`) now
+  returns the unwrapped payload directly, so callers in `scanner.py` and
+  `dashboard.py` no longer do their own `.get("data", ...)`. Also coerced
+  security IDs to `int` in the request (`_coerce_securities`) — dhanhq's own
+  docstring examples use ints, this repo carries them as strings everywhere
+  else (DataFrame values/dict keys). Overview and Full Scanner tabs now
+  wrap their Dhan calls in try/except like the Option Chain tab already did,
+  so a future transient Dhan error shows as `st.error(...)` instead of
+  crashing the page. **If you touch `dhan_client.py` again**: every dhanhq
+  call must go through `_unwrap()` — don't reach into `response["data"]`
+  directly, the nesting depth differs between dhanhq's own wrapper and
+  Dhan's REST body and is easy to get wrong again.
+- **`nse_get_index_quote()` (nsepython) hits a dead host** — confirmed via
+  direct DNS lookup that `iislliveblob.niftyindices.com` is NXDOMAIN, not a
+  transient/local network issue. Fixed 2026-09-23: `market_status.py`'s
+  `get_index_snapshot()` now uses nsepython's `index_info()` instead, which
+  hits `nseindia.com/api/allIndices` (the same live host `nse_marketStatus()`
+  already used) — verified working for `"NIFTY 50"`, `"NIFTY BANK"`,
+  `"INDIA VIX"`.
 
 ---
 

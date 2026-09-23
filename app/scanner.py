@@ -63,7 +63,7 @@ def compute_breadth(dhan_client, security_ids: list[str], exchange_segment: str 
 
     for chunk in _chunks(security_ids, CHUNK_SIZE):
         quote = dhan_client.get_quote({exchange_segment: chunk})
-        rows = quote.get("data", {}).get(exchange_segment, {})
+        rows = quote.get(exchange_segment, {})
         for _, row in rows.items():
             ltp = row.get("last_price")
             close = row.get("ohlc", {}).get("close")
@@ -94,7 +94,7 @@ def quotes_to_dataframe(dhan_client, security_ids: list[str], exchange_segment: 
     records = []
     for chunk in _chunks(security_ids, CHUNK_SIZE):
         quote = dhan_client.get_quote({exchange_segment: chunk})
-        rows = quote.get("data", {}).get(exchange_segment, {})
+        rows = quote.get(exchange_segment, {})
         for sec_id, row in rows.items():
             ohlc = row.get("ohlc", {})
             ltp = row.get("last_price")

@@ -28,6 +28,45 @@ class DhanTokenExpiredError(RuntimeError):
     pass
 
 
+class DhanApiError(RuntimeError):
+    """
+    Dhan's request succeeded at the transport level but the API itself
+    reported a failure (bad security ID, rate limit, malformed request, ...).
+
+    dhanhq's own HTTP layer (dhan_http.DhanHTTP._parse_response) wraps every
+    call as {status, remarks, data}: on success `data` holds Dhan's raw
+    response body verbatim, which for most endpoints is *itself* a second
+    {status, data} envelope — so the real payload sits two levels deep, not
+    one. On failure `data` is '' (an empty string, not {}) and the actual
+    error lives in `remarks`. Naively doing `response["data"].get(...)`
+    either silently returns nothing (success case, wrong nesting level) or
+    crashes with "'str' object has no attribute 'get'" (failure case) —
+    see _unwrap() below, which every method on DhanMarketClient goes through.
+    """
+    pass
+
+
+def _unwrap(response: dict, what: str):
+    """Normalize a raw dhanhq call to just its payload, or raise DhanApiError
+    with Dhan's actual error message. See DhanApiError's docstring."""
+    if not isinstance(response, dict) or response.get("status") != "success":
+        remarks = response.get("remarks") if isinstance(response, dict) else None
+        message = remarks.get("error_message") if isinstance(remarks, dict) else remarks
+        raise DhanApiError(f"{what} failed: {message or response!r}")
+    body = response.get("data")
+    if isinstance(body, dict) and "data" in body and "status" in body:
+        return body["data"]  # the common double-{status,data} envelope
+    return body
+
+
+def _coerce_securities(securities: dict) -> dict:
+    """dhanhq's own securities examples use integer security IDs; this repo
+    carries them as strings everywhere else (they're DataFrame values and
+    dict keys), so normalize at the API boundary instead of chasing
+    str-vs-int through every caller."""
+    return {segment: [int(s) for s in ids] for segment, ids in securities.items()}
+
+
 @dataclass
 class TokenState:
     access_token: str
@@ -108,35 +147,41 @@ class DhanMarketClient:
     def get_ltp(self, securities: dict) -> dict:
         """
         securities: {"NSE_EQ": [security_id, ...], "NSE_FNO": [...], "BSE_EQ": [...]}
-        Returns Dhan's LTP payload for up to 1000 instruments per call.
+        Returns {"NSE_EQ": {security_id: {...}, ...}, ...} for up to 1000
+        instruments per call — already unwrapped, see DhanApiError.
         """
-        return self._dhan.ohlc_data(securities=securities) if hasattr(self._dhan, "ohlc_data") \
+        securities = _coerce_securities(securities)
+        raw = self._dhan.ohlc_data(securities=securities) if hasattr(self._dhan, "ohlc_data") \
             else self._dhan.quote_data(securities=securities)
+        return _unwrap(raw, "get_ltp")
 
     def get_quote(self, securities: dict) -> dict:
         """Full quote incl. OI, depth — same securities dict shape as get_ltp."""
-        return self._dhan.quote_data(securities=securities)
+        raw = self._dhan.quote_data(securities=_coerce_securities(securities))
+        return _unwrap(raw, "get_quote")
 
     def get_option_chain(self, under_security_id: str, under_exchange_segment: str, expiry: str) -> dict:
         """
         F&O option chain: OI, greeks, volume, top bid/ask per strike.
         expiry format: "YYYY-MM-DD" — call get_expiry_list first if unknown.
         """
-        return self._dhan.option_chain(
+        raw = self._dhan.option_chain(
             under_security_id=under_security_id,
             under_exchange_segment=under_exchange_segment,
             expiry=expiry,
         )
+        return _unwrap(raw, "get_option_chain")
 
     def get_expiry_list(self, under_security_id: str, under_exchange_segment: str) -> list:
-        return self._dhan.expiry_list(
+        raw = self._dhan.expiry_list(
             under_security_id=under_security_id,
             under_exchange_segment=under_exchange_segment,
         )
+        return _unwrap(raw, "get_expiry_list")
 
     def get_fund_limits(self) -> dict:
         """Read-only — balance/margin info, no trading action."""
-        return self._dhan.get_fund_limits()
+        return _unwrap(self._dhan.get_fund_limits(), "get_fund_limits")
 
     def get_intraday_minute_data(self, security_id: str, exchange_segment: str, instrument_type: str = "EQUITY"):
         """
@@ -145,8 +190,9 @@ class DhanMarketClient:
         try/except at the call site since exact kwargs have shifted across
         dhanhq releases — confirm against your installed version if it errors.
         """
-        return self._dhan.intraday_minute_data(
+        raw = self._dhan.intraday_minute_data(
             security_id=security_id,
             exchange_segment=exchange_segment,
             instrument_type=instrument_type,
         )
+        return _unwrap(raw, "get_intraday_minute_data")
