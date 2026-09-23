@@ -133,11 +133,15 @@ docker compose up -d --build
 
 This starts it as the `dashboard` service alongside `nse-signal` and
 `golden-master`, on the same network, same `docker-compose.yml`. Open
-`http://<pi-ip>:8501`, or click "Market Dashboard" from the main site's nav
-(`http://<pi-ip>:8000`) — that link just opens :8501 in a new tab; the
-Streamlit app has no login of its own. Token state persists in the
-`dashboard-data` named volume, so a container restart doesn't force a fresh
-token paste — only the 24h Dhan expiry does.
+`http://<pi-ip>:8501` directly, or `https://market.tinyserverlab.in` if
+your tunnel (Cloudflare Tunnel or similar, set up outside this repo) routes
+that hostname to port 8501 — that's what the main site's nav ("Market
+Dashboard" link) points at. Either way the Streamlit app has no login of its
+own, so `https://market.tinyserverlab.in` is reachable by anyone with the
+URL, not just your LAN — put an access gate in front of it if that stops
+being fine. Token state persists in the `dashboard-data` named volume, so a
+container restart doesn't force a fresh token paste — only the 24h Dhan
+expiry does.
 
 **Memory**: capped at 400MB in `docker-compose.yml` (the rest of this system
 targets a 512MB ceiling per container) — Streamlit + pandas + dhanhq fits

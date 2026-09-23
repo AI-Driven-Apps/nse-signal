@@ -183,8 +183,10 @@ answer to "dashboard" in this repo:
   up` service `nse-signal`, behind login, the "site" a user browses day to
   day (routes in `app/web/app.py`).
 - **Market Dashboard** = a separate **Streamlit** app on **:8501**, service
-  `dashboard` in `docker-compose.yml`, **no login of its own** — LAN only,
-  same as the main site's own port. Live Dhan equity/F&O quotes, NSE/BSE
+  `dashboard` in `docker-compose.yml`, **no login of its own**. Reached
+  publicly at `https://market.tinyserverlab.in` via an external tunnel
+  (Cloudflare Tunnel or similar — not configured in this repo; see whatever
+  routes that hostname to the Pi). Live Dhan equity/F&O quotes, NSE/BSE
   market status, option chain. Read-only: no order placement, ever.
 
 It was added without a compose service, without the `market_status.py`
@@ -201,15 +203,21 @@ registry, and the Signals tab now reads already-computed rows via
 `app.web.data.recent_signals()` instead of recomputing positions itself
 (keeps invariant 1 — `Strategy.positions(df)` stays the one call site that
 matters, the dashboard only displays what the nightly engine already ran).
-Nav link added to `base.html` (opens :8501 in a new tab).
+Nav link added to `base.html` (opens `https://market.tinyserverlab.in` in a
+new tab).
 
 - `DHAN_CLIENT_ID` env var (long-lived) goes in `.env`; the Dhan **access
   token** itself expires every 24h with no refresh token for individual
   accounts — paste a fresh one into the dashboard's own sidebar daily, it is
   never stored in `.env`.
-- No auth on :8501 is a known, accepted gap for a LAN-only single-user box —
-  don't add real-order execution or expose this port publicly without
-  revisiting that.
+- **No auth on the Streamlit app, and it's now reachable at a public
+  hostname** (not LAN-only like the rest of this system) — anyone with
+  `https://market.tinyserverlab.in` sees live Dhan quotes and signal history,
+  no login required. Confirmed acceptable for now since it's read-only and
+  carries no secrets in the page itself, but revisit before wiring in
+  anything sensitive (real balances, broker keys client-side, etc.) — add
+  Cloudflare Access or equivalent in front of that hostname if this needs
+  gating. Never add real-order execution here regardless.
 - `app/dashboard.py`'s own sibling imports (`dhan_client`, `market_status`,
   `instrument_master`, `scanner`, `components`) are bare imports — they rely
   on being run via `python -m streamlit run app/dashboard.py` from the repo
