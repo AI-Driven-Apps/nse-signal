@@ -10,7 +10,8 @@
     "golden_master": {
       "root": "golden_master",
       "runtime": "python",
-      "entrypoint": "main:app"
+      "entrypoint": "main:app",
+      "functions": { "app.py": { "excludeFiles": "{tests/**,**/test_*.py,**/*.ipynb,data/**,notebooks/**,docs/**,.git/**}" } }
     }
   },
   "rewrites": [
