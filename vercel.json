@@ -14,5 +14,6 @@
   },
   "rewrites": [
     { "source": "/(.*)", "destination": { "service": "app" } }
-  ]
+  ],
+  "functions": { "app/web/app.py": { "excludeFiles": "{tests/**,**/test_*.py,**/*.ipynb,data/**,notebooks/**,docs/**,.git/**}" } }
 }
