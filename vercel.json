@@ -3,7 +3,8 @@
   "services": {
     "app": {
       "root": ".",
-      "framework": "fastapi"
+      "framework": "fastapi",
+      "entrypoint": "app.web.app:app"
     },
     "golden_master": {
       "root": "golden_master",
