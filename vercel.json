@@ -7,7 +7,7 @@
     },
     "golden_master": {
       "root": "golden_master",
-      "endpint": "golden_master.main",
+      "endpoint": "golden_master.main",
       "runtime": "python"
     }
   },
