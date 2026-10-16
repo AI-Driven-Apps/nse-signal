@@ -7,19 +7,11 @@
     },
     "golden_master": {
       "root": "golden_master",
-      "runtime": "python"
+      "runtime": "python",
+      "entrypoint": "main:app"
     }
   },
   "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": {
-        "service": "app"
-      }
-    }
+    { "source": "/(.*)", "destination": { "service": "app" } }
   ]
-  "routes": {
-    "src": "/(.*)",
-      "dest": "srv/main.py"
-  }
 }
