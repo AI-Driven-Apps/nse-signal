@@ -4,7 +4,8 @@
     "app": {
       "root": ".",
       "framework": "fastapi",
-      "entrypoint": "app.web.app:app"
+      "entrypoint": "app.web.app:app",
+      "functions": { "app/web/app.py": { "excludeFiles": "{tests/**,**/test_*.py,**/*.ipynb,data/**,notebooks/**,docs/**,.git/**}" } }
     },
     "golden_master": {
       "root": "golden_master",
@@ -14,6 +15,5 @@
   },
   "rewrites": [
     { "source": "/(.*)", "destination": { "service": "app" } }
-  ],
-  "functions": { "app/web/app.py": { "excludeFiles": "{tests/**,**/test_*.py,**/*.ipynb,data/**,notebooks/**,docs/**,.git/**}" } }
+  ]
 }
