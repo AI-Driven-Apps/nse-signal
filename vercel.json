@@ -7,7 +7,6 @@
     },
     "golden_master": {
       "root": "golden_master",
-      "entrypoint": "golden_master.main",
       "runtime": "python"
     }
   },
@@ -19,4 +18,8 @@
       }
     }
   ]
+  "routes": {
+    "src": "/(.*)",
+      "dest": "srv/main.py"
+  }
 }
